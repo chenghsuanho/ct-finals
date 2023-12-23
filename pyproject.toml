@@ -7,9 +7,17 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-openai = "^1.5"
+openai = "^1.6"
 PySpice = "^1.5"
 python-dotenv = "^1.0.0"
+schemdraw = {extras = ["matplotlib"], version = "^0.17"}
+jupyter = "^1.0.0"
+matplotlib = "^3.8.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.12.0"
+
+[tool.black]
 
 [build-system]
 requires = ["poetry-core"]

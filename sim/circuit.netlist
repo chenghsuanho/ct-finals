@@ -1,0 +1,12 @@
+* Circuit Netlist
+V1 1 0 DC 80V
+R1 1 2 300
+SW 2 0 3 0
+R2 3 4 500
+L1 4 0 2.5mH
+C1 4 0 40nF
+
+.ic V(4)=0 I(L1)=0
+.tran 1ms 5ms
+
+.end

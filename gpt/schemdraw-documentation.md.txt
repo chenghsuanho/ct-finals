@@ -1,0 +1,2605 @@
+Schemdraw documentation
+===========================================================================
+
+Schemdraw is a Python package for producing high-quality electrical circuit schematic diagrams. Circuit elements are added, one at a time, similar to how you might draw them by hand, using Python methods.
+
+For example,
+
+with schemdraw.Drawing() as d:
+    d += elm.Resistor().right().label('1Ω')
+
+creates a new schemdraw drawing with a resistor going to the right with a label of “1Ω”. The next element added to the drawing will start at the endpoint of the resistor.
+
+with schemdraw.Drawing() as d:
+    d += elm.Resistor().right().label('1Ω')
+    d += elm.Capacitor().down().label('10μF')
+    d += elm.Line().left()
+    d += elm.SourceSin().up().label('10V')
+
+Usage
+---------------------------------------
+
+### Placing Elements
+
+Elements are added to a Drawing using the add method or += shortcut. The Drawing maintains a current position and direction, such that the default placement of the next element will start at the end of the previous element, going in the same direction.
+
+with schemdraw.Drawing() as d:
+    d += elm.Capacitor()
+    d += elm.Resistor()
+    d += elm.Diode()
+
+If a direction method (up, down, left, right) is added to an element, the element is rotated in that direction, and future elements take the same direction:
+
+with schemdraw.Drawing() as d:
+    d += elm.Capacitor()
+    d += elm.Resistor().up()
+    d += elm.Diode()
+
+The theta method can be used to specify any rotation angle in degrees.
+
+d += elm.Resistor().theta(20).label('R1')
+d += elm.Resistor().label('R2')  \# Takes position and direction from R1
+
+#### Anchors
+
+All elements have a set of predefined “anchor” positions within the element. For example, a bipolar transistor has base, emitter, and collector anchors. All two-terminal elements have anchors named start, center, and end. The docstring for each element lists the available anchors. Once an element is added to the drawing, all its anchor positions will be added as attributes to the element object, so the base position of transistor assigned to variable Q may be accessed via Q.base.
+
+Rather than working in absolute (x, y) coordinates, anchors can be used to set the position of new elements. Using the at method, one element can be placed starting on the anchor of another element.
+
+For example, to draw an opamp and place a resistor on the output, store the Opamp instance to a variable. Then call the at method of the new element passing the Opamp.out anchor. After the resistor is drawn, the current drawing position is moved to the endpoint of the resistor.
+
+opamp \= d.add(elm.Opamp())
+d.add(elm.Resistor().right().at(opamp.out))
+
+Python’s walrus operator provides a convenient shorthand notation for adding an element using += and storing it at the same time. The above code can be written equivalently as:
+
+d += (opamp := elm.Opamp())
+d += elm.Resistor().right().at(opamp.out)
+
+The second purpose for anchors is aligning new elements with respect to existing elements.
+
+Suppose a resistor has just been placed, and now an Opamp should be connected to the resistor. The anchor method tells the Drawing which input on the Opamp should align with resistor. Here, an Opamp is placed at the end of a resistor, connected to the opamp’s in1 anchor (the inverting input).
+
+d += elm.Resistor().label('R1')
+d += elm.Opamp().anchor('in1')
+
+Compared to anchoring the opamp at in2 (the noninverting input):
+
+d += elm.Resistor().label('R2')
+d += elm.Opamp().anchor('in2')
+
+#### Dimensions
+
+The inner zig-zag portion of a resistor has length of 1 unit, while the default lead extensions are 1 unit on each side, making the default total resistor length 3 units. Placement methods such as at and to accept a tuple of (x, y) position in these units.
+
+This default 2-terminal length can be changed using the unit parameter to the [`schemdraw.Drawing.config()`](#schemdraw.Drawing.config "schemdraw.Drawing.config") method:
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=2)
+    ...
+
+#### Two-Terminal Elements
+
+In Schemdraw, a “Two-Terminal Element” is any element that can grow to fill a given length (this includes elements such as the Potentiometer, even though it electrically has three terminals). All two-terminal elements subclass [`schemdraw.elements.Element2Term`](#schemdraw.elements.Element2Term "schemdraw.elements.Element2Term"). They have some additional methods for setting placement and length.
+
+The length method sets an exact length for a two-terminal element. Alternatively, the up, down, left, and right methods on two-terminal elements take a length parameter.
+
+with schemdraw.Drawing() as d:
+    d += elm.Dot()
+    d += elm.Resistor()
+    d += elm.Dot()
+    d += elm.Diode().length(6)    d += elm.Dot()
+
+The to method will set an exact endpoint for a 2-terminal element. The starting point is still the ending location of the previous element. Notice the Diode is stretched longer than the standard element length in order to fill the diagonal distance.
+
+with schemdraw.Drawing() as d:
+    R \= d.add(elm.Resistor())
+    C \= d.add(elm.Capacitor().up())
+    Q \= d.add(elm.Diode().to(R.start))
+
+The tox and toy methods are useful for placing 2-terminal elements to “close the loop”, without requiring an exact length. They extend the element horizontally or vertically to the x- or y- coordinate of the anchor given as the argument. These methods automatically change the drawing direction. Here, the Line element does not need to specify an exact length to fill the space and connect back with the Source.
+
+d += (C := elm.Capacitor())
+d += elm.Diode()
+d += elm.Line().down()
+
+\# Now we want to close the loop, but can use \`tox\`
+\# to avoid having to know exactly how far to go.
+\# The Line will extend horizontally to the same x-position
+\# as the Capacitor's \`start\` anchor.
+d += elm.Line().tox(C.start)
+\# Now close the loop by relying on the fact that all
+\# two-terminal elements (including Source and Line)
+\# are the same length by default
+d += elm.Source().up()
+
+Finally, exact endpoints can also be specified using the endpoints method.
+
+d += (R := elm.Resistor())
+d += (Q := elm.Diode().down(6))
+d += elm.Line().tox(R.start)
+d += elm.Capacitor().toy(R.start)
+d += elm.SourceV().endpoints(Q.end, R.start)
+
+#### Orientation
+
+The flip and reverse methods are useful for changing orientation of directional elements such as Diodes, but they do not affect the drawing direction.
+
+d += elm.Zener().label('Normal')
+d += elm.Zener().flip().label('Flip')
+d += elm.Zener().reverse().label('Reverse')
+
+#### Drawing State
+
+The [`schemdraw.Drawing`](#schemdraw.Drawing "schemdraw.Drawing") maintains a drawing state that includes the current x, y position, stored in the Drawing.here attribute as a (x, y) tuple, and drawing direction stored in the Drawing.theta attribute. A LIFO stack of drawing states can be used, via the [`schemdraw.Drawing.push()`](#schemdraw.Drawing.push "schemdraw.Drawing.push") and [`schemdraw.Drawing.pop()`](#schemdraw.Drawing.pop "schemdraw.Drawing.pop") method, for situations when it’s useful to save the drawing state and come back to it later.
+
+d += elm.Inductor()
+d += elm.Dot()
+print('d.here:', d.here)
+d.push()  \# Save this drawing position/direction for later
+d += elm.Capacitor().down()  \# Go off in another direction temporarily
+d += elm.Ground(lead\=False)
+print('d.here:', d.here)
+
+d.pop()   \# Return to the pushed position/direction
+print('d.here:', d.here)
+d += elm.Diode()
+d.draw()
+
+d.here: Point(3.0,0.0)
+d.here: Point(2.9999999999999996,-3.0)
+d.here: Point(3.0,0.0)
+
+Changing the drawing position can be accomplished by calling [`schemdraw.Drawing.move()`](#schemdraw.Drawing.move "schemdraw.Drawing.move") or [`schemdraw.Drawing.move_from()`](#schemdraw.Drawing.move_from "schemdraw.Drawing.move_from").
+
+##### Drop and Hold Methods
+
+To place an element without moving the drawing position, use the [`schemdraw.elements.Element.hold()`](#schemdraw.elements.Element.hold "schemdraw.elements.Element.hold") method. The element will be placed without changing the drawing state.
+
+d += elm.Diode()  \# Normal placement: drawing position moves to end of element
+d += elm.Dot().color('red')
+
+d.here \= (0, \-1)
+d += elm.Diode().hold()  \# Hold method prevents position from changing
+d += elm.Dot().color('blue')
+
+Three-terminal elements do not necessarily leave the drawing position where desired, so after drawing an element, the current drawing position can be set using the [`schemdraw.elements.Element.drop()`](#schemdraw.elements.Element.drop "schemdraw.elements.Element.drop") method to specify an anchor at which to place the cursor. This reduces the need to assign every element to a variable name.
+
+d += elm.BjtNpn()
+d += elm.Resistor().label('R1')
+d.here \= (5, 0)
+
+d += elm.BjtNpn().drop('emitter')
+d += elm.Resistor().label('R2')
+
+#### Connecting Elements
+
+Typically, the [`schemdraw.elements.lines.Line`](#schemdraw.elements.lines.Line "schemdraw.elements.lines.Line") element is used to connect elements together. More complex line routing requires multiple Line elements. The [`schemdraw.elements.lines.Wire`](#schemdraw.elements.lines.Wire "schemdraw.elements.lines.Wire") element is used as a shortcut for placing multiple connecting lines at once. The Wire element connects the start and end points based on its shape parameter. The k parameter is used to set the distance before the wire first changes direction.
+
+Wire Shape Parameters
+
+Shape Parameter
+
+Description
+
+\-
+
+Direct Line
+
+\-|
+
+Horizontal then vertical
+
+|-
+
+Vertical then horizontal
+
+n
+
+Vertical-horizontal-vertical (like an n or u)
+
+c
+
+Horizontal-vertical-horizontal (like a c or ↄ)
+
+z
+
+Horizontal-diagonal-horizontal
+
+N
+
+Vertical-diagonal-vertical
+
+d += elm.Wire('-', arrow\='->').at(A.center).to(B.center).color('deeppink').label('"-"')
+d += elm.Wire('|-', arrow\='->').at(A.center).to(B.center).color('mediumblue').label('"|-"')
+d += elm.Wire('-|', arrow\='->').at(A.center).to(B.center).color('darkseagreen').label('"-|"')
+d += elm.Wire('c', k\=-1, arrow\='->').at(C.center).to(D.center).color('darkorange').label('"c"', halign\='left')
+d += elm.Wire('n', arrow\='->').at(C.center).to(D.center).color('orchid').label('"n"')
+d += elm.Wire('N', arrow\='->').at(E.center).to(F.center).color('darkred').label('"N"', 'start', ofst\=(\-.1, \-.75))
+d += elm.Wire('z', k\=.5, arrow\='->').at(E.center).to(F.center).color('teal').label('"z"', halign\='left', ofst\=(0, .5))
+
+Both Line and Wire elements take an arrow parameter, a string specification of arrowhead types at the start and end of the wire. The arrow string may contain “<”, “>”, for arrowheads, “|” for an endcap, and “o” for a dot. Some examples are shown below:
+
+d += elm.Line(arrow\='->').label('"->"', 'right')
+d += elm.Line(arrow\='<-').at((0, \-.75)).label('"<-"', 'right')
+d += elm.Line(arrow\='<->').at((0, \-1.5)).label('"<->"', 'right')
+d += elm.Line(arrow\='|->').at((0, \-2.25)).label('"|->"', 'right')
+d += elm.Line(arrow\='|-o').at((0, \-3.0)).label('"|-o"', 'right')
+
+Because dots are used to show connected wires, all two-terminal elements have dot and idot methods for quickly adding a dot at the end or beginning of the element, respectively.
+
+elm.Resistor().dot()
+
+#### Keyword Arguments
+
+All [`schemdraw.elements.Element`](#schemdraw.elements.Element "schemdraw.elements.Element") types take keyword arguments that can also be used to set element properties, partly for historical reasons but also for easy element setup via dictionary unpacking. The keyword arguments are equivalent to calling the Element setup methods. The keyword arguments are not validated or type checked, so the chained method interface described above is recommended for configuring elements.
+
+Keyword Argument
+
+Method Equivalent
+
+d=’up’
+
+.up()
+
+d=’down’
+
+.down()
+
+d=’left’
+
+.left()
+
+d=’right’
+
+.right()
+
+theta=X
+
+.theta(X)
+
+at=X or xy=X
+
+.at(X)
+
+flip=True
+
+.flip()
+
+reverse=True
+
+.reverse()
+
+anchor=X
+
+.anchor(X)
+
+zoom=X
+
+.scale(X)
+
+color=X
+
+.color(X)
+
+fill=X
+
+.fill(X)
+
+ls=X
+
+.linestyle(X)
+
+lw=X
+
+.linewidth(X)
+
+zorder=X
+
+.zorder(X)
+
+move\_cur=False
+
+.hold()
+
+label=X
+
+.label(X)
+
+botlabel=X
+
+.label(X, loc=’bottom’)
+
+lftlabel=X
+
+.label(X, loc=’left’)
+
+rgtlabel=X
+
+.label(X, loc=’right’)
+
+toplabel=X
+
+.label(X, loc=’top’)
+
+lblloc=X
+
+.label(…, loc=X)
+
+### Labels
+
+Labels are added to elements using the [`schemdraw.elements.Element.label()`](#schemdraw.elements.Element.label "schemdraw.elements.Element.label") method. Some unicode utf-8 characters are allowed, such as `'1μF'` and `'1MΩ'` if the character is included in your font set. Alternatively, full LaTeX math expressions can be rendered when enclosed in $..$ For a description of supported math expressions, in the Matplotlib backend see [Matplotlib Mathtext](https://matplotlib.org/stable/tutorials/text/mathtext.html), and the SVG backend refer to the [Ziamath](https://ziamath.readthedocs.io) package. Subscripts and superscripts are also added using LaTeX math mode, enclosed in $..$:
+
+d += elm.Resistor().label('1MΩ')
+d += elm.Capacitor().label('1μF')
+d += elm.Capacitor().label(r'$v = \\frac{1}{C} \\int i dt$')
+d += elm.Resistor().at((0, \-2)).label('$R\_0$')
+d += elm.Capacitor().label('$x^2$')
+
+#### Location
+
+The label location is specified with the loc parameter to the label method. It can be left, right, top, bottom, or the name of a defined anchor within the element. These directions do not depend on rotation. A label with loc=’left’ is always on the leftmost terminal of the element.
+
+d += (elm.Resistor()
+        .label('Label')  \# 'top' is default
+        .label('Bottom', loc\='bottom')
+        .label('Right', loc\='right')
+        .label('Left', loc\='left'))
+
+Labels may also be placed near an element anchor by giving the anchor name as the loc parameter.
+
+d += (elm.BjtNpn()
+        .label('b', loc\='base')
+        .label('c', loc\='collector')
+        .label('e', loc\='emitter'))
+
+The [`schemdraw.elements.Element.label()`](#schemdraw.elements.Element.label "schemdraw.elements.Element.label") method also takes parameters that control the label’s rotation, offset, font, alignment, and color. Label text stays horizontal by default, but may be rotated to the same angle as the element using rotate=True, or any angle X in degrees with rotate=X. Offsets apply vertically if a float value is given, or in both x and y if a tuple is given.
+
+d += elm.Resistor().label('no offset')
+d += elm.Resistor().label('offset', ofst\=1)
+d += elm.Resistor().label('offset (x, y)', ofst\=(\-.6, .2))
+d += elm.Resistor().theta(\-45).label('no rotate')
+d += elm.Resistor().theta(\-45).label('rotate', rotate\=True)
+d += elm.Resistor().theta(45).label('90°', rotate\=90)
+
+Labels may also be added anywhere using the [`schemdraw.elements.lines.Label`](#schemdraw.elements.lines.Label "schemdraw.elements.lines.Label") element. The element itself draws nothing, but labels can be added to it:
+
+elm.Label().label('Hello')
+
+#### Voltage Labels
+
+A label may also be a list/tuple of strings, which will be evenly-spaced along the length of the element. This allows for labeling positive and negative along with a component name, for example:
+
+d += elm.Resistor().label(('–','$V\_1$','+'))  \# Note: using endash U+2013 character
+
+Use the Gap element to label voltage across a terminal:
+
+d += elm.Line().dot(open\=True)
+d += elm.Gap().label(('–','$V\_o$','+'))
+d += elm.Line().idot(open\=True)
+
+#### Current Arrow Labels
+
+##### Current Arrow
+
+To label the current through an element, the [`schemdraw.elements.lines.CurrentLabel`](#schemdraw.elements.lines.CurrentLabel "schemdraw.elements.lines.CurrentLabel") element can be added. The at method of this element can take an Element instance to label, and the arrow will be placed over the center of that Element.
+
+d += (R1 := elm.Resistor())
+d += elm.CurrentLabel().at(R1).label('10 mA')
+
+For transistors, the label will follow sensible bias currents by default.
+
+d += (Q1 := elm.AnalogNFet())
+d += elm.CurrentLabel().at(Q1).label('10 µA')
+
+d += (Q2 := elm.AnalogNFet()).at(\[4,0\]).flip().reverse()
+d += elm.CurrentLabel().at(Q2).label('10 µA')
+
+##### Inline Current Arrow
+
+Alternatively, current labels can be drawn inline as arrowheads on the leads of 2-terminal elements using [`schemdraw.elements.lines.CurrentLabelInline`](#schemdraw.elements.lines.CurrentLabelInline "schemdraw.elements.lines.CurrentLabelInline"). Parameters direction and start control whether the arrow is shown pointing into or out of the element, and which end to place the arrowhead on.
+
+d += (R1 := elm.Resistor())
+d += elm.CurrentLabelInline(direction\='in').at(R1).label('10 mA')
+
+##### Loop Current
+
+Loop currents can be added using [`schemdraw.elements.lines.LoopCurrent`](#schemdraw.elements.lines.LoopCurrent "schemdraw.elements.lines.LoopCurrent"), given a list of 4 existing elements surrounding the loop.
+
+d += (R1 := elm.Resistor())
+d += (C1 := elm.Capacitor().down())
+d += (D1 := elm.Diode().fill(True).left())
+d += (L1 := elm.Inductor().up())
+d += elm.LoopCurrent(\[R1, C1, D1, L1\], direction\='cw').label('$I\_1$')
+
+Alternatively, loop current arrows can be added anywhere with any size using [`schemdraw.elements.lines.LoopArrow`](#schemdraw.elements.lines.LoopArrow "schemdraw.elements.lines.LoopArrow").
+
+d += (a:=elm.Line().dot())
+d += elm.LoopArrow(width\=.75, height\=.75).at(a.end)
+
+##### Impedance Arrow Label
+
+A right-angle arrow label, often used to indicate impedance looking into a node, is added using [`schemdraw.elements.lines.ZLabel`](#schemdraw.elements.lines.ZLabel "schemdraw.elements.lines.ZLabel").
+
+d += (R:=elm.RBox().right())
+d += elm.ZLabel().at(R).label('$Z\_{in}$')
+
+#### Annotations
+
+To make text and arrow annotations to a schematic, the [`schemdraw.elements.lines.Annotate`](#schemdraw.elements.lines.Annotate "schemdraw.elements.lines.Annotate") element draws a curvy arrow with label placed at it’s end. It is based on the [`schemdraw.elements.lines.Arc3`](#schemdraw.elements.lines.Arc3 "schemdraw.elements.lines.Arc3") element.
+
+The [`schemdraw.elements.lines.Encircle`](#schemdraw.elements.lines.Encircle "schemdraw.elements.lines.Encircle") and [`schemdraw.elements.lines.EncircleBox`](#schemdraw.elements.lines.EncircleBox "schemdraw.elements.lines.EncircleBox") elements draw an ellipse, or rounded rectangle, surrounding a list of elements.
+
+d += (parallel := elm.Encircle(\[R1, R2\], padx\=.8).linestyle('--').linewidth(1).color('red'))
+d += (series := elm.Encircle(\[R3, R4\], padx\=.8).linestyle('--').linewidth(1).color('blue'))
+
+d += elm.Annotate().at(parallel.NNE).delta(dx\=1, dy\=1).label('Parallel').color('red')
+d += elm.Annotate(th1\=0).at(series.ENE).delta(dx\=1.5, dy\=1).label('Series').color('blue')
+
+### Styling
+
+Style options, such as color, line thickness, and fonts, may be set at the global level (all Schemdraw Drawings), at the Drawing level, or on individual Elements.
+
+#### Individual Elements
+
+Element styling methods include color, fill, linewidth, and linestyle. If a style method is not called when creating an Element, its value is obtained from from the drawing or global defaults.
+
+Color and fill parameters accept any named [SVG color](https://upload.wikimedia.org/wikipedia/commons/2/2b/SVG_Recognized_color_keyword_names.svg) or a hex color string such as ‘#6A5ACD’. Linestyle parameters may be ‘-’, ‘–’, ‘:’, or ‘-.’.
+
+\# All elements are blue with lightgray fill unless specified otherwise
+d \= schemdraw.Drawing(color\='blue', fill\='lightgray')
+
+d += elm.Diode()
+d += elm.Diode().fill('red')        \# Fill overrides drawing color here
+d += elm.Resistor().fill('purple')  \# Fill has no effect on non-closed elements
+d += elm.RBox().linestyle('--').color('orange')
+d += elm.Resistor().linewidth(5)
+
+The label method also accepts color, font, and fontsize parameters, allowing labels with different style as their elements.
+
+#### Drawing style
+
+Styles may be applied to an entire drawing using the [`schemdraw.Drawing.config()`](#schemdraw.Drawing.config "schemdraw.Drawing.config") method. These parameters include color, linewidth, font, fontsize, linestyle, fill, and background color. Additionally, the config method allows specification of the default 2-Terminal element length.
+
+#### Global style
+
+Styles may be applied to every new drawing created by Schemdraw (during the Python session) using [`schemdraw.config()`](#schemdraw.config "schemdraw.config"), using the same arguments as the Drawing config method.
+
+schemdraw.config(lw\=1, font\='serif')
+with schemdraw.Drawing() as d:
+    d += elm.Resistor().label('100KΩ')
+    d += elm.Capacitor().down().label('0.1μF', loc\='bottom')
+    d += elm.Line().left()
+    d += elm.Ground()
+    d += elm.SourceV().up().label('10V')
+
+#### Global Element Configuration
+
+The [`schemdraw.elements.Element.style()`](#schemdraw.elements.Element.style "schemdraw.elements.Element.style") can be used to configure styles on individual element classes that apply to all Drawings. It may be used, for example, to fill all Diode elements by default, without requiring the fill() method on every Diode instance.
+
+Its argument is a dictionary of {name: Element} class pairs. Combined with [functools.partial](https://docs.python.org/3/library/functools.html#functools.partial) from the standard library, parameters to elements can be set globally. For example, the following code fills all Diode elements:
+
+from functools import partial
+
+elm.style({'Diode': partial(elm.Diode, fill\=True)})
+with schemdraw.Drawing() as d:
+    d += elm.Diode()
+    d += elm.Diode()
+
+Be careful, though, because the style method can overwrite existing elements in the namespace.
+
+#### U.S. versus European Style
+
+The main use of [`schemdraw.elements.Element.style()`](#schemdraw.elements.Element.style "schemdraw.elements.Element.style") is to reconfigure elements in IEEE/U.S. style or IEC/European style. The schemdraw.elements.STYLE\_IEC and schemdraw.elements.STYLE\_IEEE are dictionaries for use in the style method to change configuration of various elements that use different standard symbols (resistor, variable resistor, photo resistor, etc.)
+
+To configure IEC/European style, use the style method with the elm.STYLE\_IEC dictionary.
+
+elm.style(elm.STYLE\_IEC)
+d += elm.Resistor()
+
+elm.style(elm.STYLE\_IEEE)
+d += elm.Resistor()
+
+To see all the elements that change between IEEE and IEC, see [Styled Elements](#styledelements).
+
+#### Fonts
+
+The font for label text may be set using the font parameter, either in the [`schemdraw.elements.Element.label()`](#schemdraw.elements.Element.label "schemdraw.elements.Element.label") method for a single label, or in [`schemdraw.Drawing.config()`](#schemdraw.Drawing.config "schemdraw.Drawing.config") to set the font for the entire drawing. The font parameter may be a string containing the name of a font installed in the system fonts path, a path to a TTF font file, or the name of a font family such as “serif” or “sans”. These font options apply whether working in the Matplotlib or SVG backends.
+
+with schemdraw.Drawing() as d:
+    \# Default font
+    d += elm.RBox().label('R1\\n500K')
+
+    \# Named font in system fonts path
+    d += elm.RBox().label('R1\\n500K', font\='Comic Sans MS')
+
+    \# Path to a TTF file
+    d += elm.RBox().label('R1\\n500K', font\='Peralta-Regular.ttf')
+
+    \# Font family
+    d += elm.RBox().label('R1\\n500K', font\='serif')
+
+For typesetting math expressions, the mathfont parameter is used. In the Matplotlib backend, a limited [selection of math fonts](https://matplotlib.org/stable/tutorials/text/mathtext.html#fonts) are available. With the SVG backend in the path text mode, the mathfont parameter may be the path to any TTF file that contains a MATH table (requires [Ziamath](https://ziamath.readthedocs.io)).
+
+with schemdraw.Drawing(canvas\='svg') as d:
+    \# Default math font
+    d += elm.RBox().label(r'$\\sqrt{a^2+b^2}$').at((0, \-2))
+
+    \# Path to a TTF file with MATH font table (SVG backend only)
+    d += elm.RBox().label(r'$\\sqrt{a^2+b^2}$', mathfont\='Asana-Math.ttf')
+
+#### Themes
+
+Schemdraw also supports themeing, to enable dark mode, for example. The defined themes match those in the [Jupyter Themes](https://github.com/dunovank/jupyter-themes) package:
+
+> *   default (black on white)
+>
+> *   dark (white on black)
+>
+> *   solarizedd
+>
+> *   solarizedl
+>
+> *   onedork
+>
+> *   oceans16
+>
+> *   monokai
+>
+> *   gruvboxl
+>
+> *   gruvboxd
+>
+> *   grade3
+>
+> *   chesterish
+>
+
+They are enabled using [`schemdraw.theme()`](#schemdraw.theme "schemdraw.theme"):
+
+schemdraw.theme('monokai')
+with schemdraw.Drawing() as d:
+    d += elm.Resistor().label('100KΩ')
+    d += elm.Capacitor().down().label('0.1μF', loc\='bottom')
+    d += elm.Line().left()
+    d += elm.Ground()
+    d += elm.SourceV().up().label('10V')
+
+### Backends
+
+The backend is the “canvas” on which a schematic is drawn. Schemdraw supports two backends: Matplotlib, and SVG.
+
+#### Matplotlib Backend
+
+By default, all schematics are drawn on a Matplotlib axis. A new Matplotlib Figure and Axis will be created, with no frame or borders. A schematic may be added to an existing Axis by using the [`schemdraw.Drawing.draw()`](#schemdraw.Drawing.draw "schemdraw.Drawing.draw") method and setting the canvas parameter to an existing Axis instance.
+
+The Matplotlib backend renders text labels as primative lines and arcs rather than text elements by default. This has the downside that SVG editors, such as Inkscape, cannot perform textual searches on the SVGs. The upside is that there is no dependence on installed fonts on the hosts that open the SVGs.
+
+To configure Matplotlib to render labels as SVG text elements:
+
+import matplotlib
+matplotlib.rcParams\['svg.fonttype'\] \= 'none'
+
+#### SVG Backend
+
+Schematics can also be drawn on directly to an SVG image backend. The SVG backend can be enabled for all drawings by calling:
+
+schemdraw.use('svg')
+
+The backend can be changed at any time. Alternatively, the backend can be set individually on each Drawing using the canvas parameter:
+
+with schemdraw.Drawing(canvas\='svg') as d:
+    ...
+
+Use additional Python libraries, such as [pycairo](https://cairosvg.org/), to convert the SVG output into other image formats.
+
+##### Math Text
+
+The SVG backend has basic math text support, including greek symbols, subscripts, and superscripts. However, if [ziamath](https://ziamath.readthedocs.io) and [latex2mathml](https://pypi.org/project/latex2mathml/) packages are installed, they will be used for full Latex math support.
+
+The SVG backend can produce searchable-text SVGs by setting:
+
+schemdraw.svgconfig.text \= 'text'
+
+However, text mode does not support full Latex compatibility. To switch back to rendering text as SVG paths:
+
+schemdraw.svgconfig.text \= 'path'
+
+Some SVG renderers are not fully compatible with SVG2.0. For better compatibility with SVG1.x, use
+
+schemdraw.svgconfig.svg2 \= False
+
+The decimal precision of SVG elements can be set using
+
+schemdraw.svgconfig.precision \= 2
+
+#### Backend Comparison
+
+Reasons to choose the SVG backend include:
+
+> *   No Matplotlib/Numpy dependency required (huge file size savings if bundling an executable).
+>
+> *   Speed. The SVG backend draws 4-10x faster than Matplotlib, depending on the circuit complexity.
+>
+
+Reasons to use Matplotlib backend:
+
+> *   To customize the schematic after drawing it by using other Matplotlib functionality.
+>
+> *   To render directly in other, non-SVG, image formats, with no additional code.
+>
+
+Circuit Elements
+-------------------------------------------------------------
+
+### Basic Elements
+
+See [Electrical Elements](#elecelements) for complete class definitions for these elements.
+
+#### Two-terminal
+
+Two-terminal devices subclass [`schemdraw.elements.Element2Term`](#schemdraw.elements.Element2Term "schemdraw.elements.Element2Term"), and have leads that will be extended to make the element the desired length depending on the arguments. All two-terminal elements define start, end, and center anchors for placing, and a few define other anchors as shown in blue in the tables below. Some elements have optional parameters, shown in parenthesis in the table below.
+
+##### Styled Elements
+
+These elements change based on IEEE/U.S. vs IEC/European style configured by [`schemdraw.elements.style()`](#schemdraw.elements.style "schemdraw.elements.style"). Selectable elements, such as Resistor, point to either ResistorIEEE or ResistorIEC, for example.
+
+###### IEEE Style
+
+IEEE style, common in the U.S., is the default, or it can be configured using
+
+elm.style(elm.STYLE\_IEEE)
+
+###### IEC/European Style
+
+IEC style can be enabled using
+
+elm.style(elm.STYLE\_IEC)
+
+##### Resistors
+
+Both styles of resistors are always available using these classes.
+
+##### Capacitors and Inductors
+
+##### Diodes
+
+##### Pathological
+
+##### Miscellaneous
+
+##### Sources and Meters
+
+##### Switches
+
+##### Lines and Arrows
+
+#### Single-Terminal
+
+Single terminal elements are drawn about a single point, and do not move the current drawing position.
+
+##### Power and Ground
+
+##### Antennas
+
+##### Connection Dots
+
+#### Switches
+
+The standard toggle switch is listed with other two-terminal elements above. Other switch configurations are shown here.
+
+##### Single-pole double-throw
+
+Two options for SPDT switches can be also be drawn with arrows by adding action=’open’ or action=’close’ parameters.
+
+##### Double-pole
+
+DPST and DPDT switches have a link parameter for disabling the dotted line lnking the poles.
+
+##### Rotary Switch
+
+The rotary switch [`schemdraw.elements.switches.SwitchRotary`](#schemdraw.elements.switches.SwitchRotary "schemdraw.elements.switches.SwitchRotary") takes several parameters, with n being the number of contacts and other parameters defining the contact placement.
+
+##### DIP Switch
+
+A set of switches in a dual-inline package, where can show each switch flipped up or down. See [`schemdraw.elements.switches.SwitchDIP`](#schemdraw.elements.switches.SwitchDIP "schemdraw.elements.switches.SwitchDIP") for options.
+
+#### Audio Elements
+
+Speakers, Microphones, Jacks
+
+#### Labels
+
+The Label element can be used to add a label anywhere. The Gap is like an “invisible” element, useful for marking the voltage between output terminals.
+
+#### Operational Amplifiers
+
+The [`schemdraw.elements.opamp.Opamp`](#schemdraw.elements.opamp.Opamp "schemdraw.elements.opamp.Opamp") element defines several anchors for various inputs, including voltage supplies and offset nulls. Optional leads can be added using the leads parameter, with anchors exteded to the ends of the leads.
+
+#### Transistors
+
+##### Bipolar Junction Transistors
+
+##### Field-Effect Transistors
+
+##### “Two-Terminal” Transistors
+
+Another set of transistor elements subclass [`schemdraw.elements.Element2Term`](#schemdraw.elements.Element2Term "schemdraw.elements.Element2Term") so they have emitter and collector (or source and drain) leads extended to the desired length. These can be easier to place centered between endpoints, for example.
+
+#### Two-ports
+
+Twoport elements share the interface defined by [`schemdraw.elements.twoports.ElementTwoport`](#schemdraw.elements.twoports.ElementTwoport "schemdraw.elements.twoports.ElementTwoport"), providing a set of anchors and various styling options. The terminals and box can be enabled or disabled using the terminals and box arguments. In addition, the boxfill, boxlw, and boxls provide the option to style the outline separately from other elements.
+
+##### Generic
+
+##### Transactors (ideal amplifiers)
+
+Like the generic twoport, the transactors provide the option to reverse the direction of the output or current using the reverse\_output argument.
+
+##### Pathological
+
+##### Custom
+
+The [`schemdraw.elements.twoports.ElementTwoport`](#schemdraw.elements.twoports.ElementTwoport "schemdraw.elements.twoports.ElementTwoport") class can be used to define custom twoports by specifying an input\_element and output\_element. The bpadx, bpady, minw, unit, width can be used to tune the horizontal and vertical padding, minimum width of the elements, length of components, and width of the twoport respectively.
+
+d += elm.ElementTwoport(input\_element\=elm.Inductor2(),
+                        output\_element\=elm.SwitchReed(),
+                        unit\=2.5, width\=2.5).anchor('center')
+
+d += elm.ElementTwoport(input\_element\=elm.Lamp(),
+                        output\_element\=elm.Photodiode().reverse().flip(),
+                        width\=3).anchor('center').at(\[7,0\])
+
+#### Cables
+
+[`schemdraw.elements.cables.Coax`](#schemdraw.elements.cables.Coax "schemdraw.elements.cables.Coax") and [`schemdraw.elements.cables.Triax`](#schemdraw.elements.cables.Triax "schemdraw.elements.cables.Triax") cables are 2-Terminal elements that can be made with several options and anchors. Coax parameters include length, radius, and leadlen for setting the distance between leads and the shell. Triax parameters include length, radiusinner, radiusouter, leadlen, and shieldofststart for offseting the outer shield from the inner guard.
+
+#### Transformers
+
+The [`schemdraw.elements.xform.Transformer`](#schemdraw.elements.xform.Transformer "schemdraw.elements.xform.Transformer") element is used to create various transformers. Anchors p1, p2, s1, and s2 are defined for all transformers. Other anchors can be created using the taps method to add tap locations to either side.
+
+Here is a transformers with anchor “B” added using the tap method. Note the tap by itself does not draw anything, but defines a named anchor to connect to.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    x \= d.add(elm.Transformer(t1\=4, t2\=8)
+              .tap(name\='B', pos\=3, side\='secondary'))
+    d += elm.Line().at(x.s1).length(d.unit/4).label('s1', 'rgt').color('blue')
+    d += elm.Line().at(x.s2).length(d.unit/4).label('s2', 'rgt').color('blue')
+    d += elm.Line().at(x.p1).length(d.unit/4).left().label('p1', 'lft').color('blue')
+    d += elm.Line().at(x.p2).length(d.unit/4).left().label('p2', 'lft').color('blue')
+    d += elm.Line().at(x.B).length(d.unit/4).right().label('B', 'rgt').color('blue')
+
+### Integrated Circuits
+
+The [`schemdraw.elements.intcircuits.Ic`](#schemdraw.elements.intcircuits.Ic "schemdraw.elements.intcircuits.Ic") class is used to make integrated circuits, multiplexers, and other black box elements. The [`schemdraw.elements.intcircuits.IcPin`](#schemdraw.elements.intcircuits.IcPin "schemdraw.elements.intcircuits.IcPin") class is used to define each input/output pin before adding it to the Ic.
+
+All pins will be given an anchor name of inXY where X is the side (L, R, T, B), and Y is the pin number along that side. Pins also define anchors based on the name parameter. If the anchorname parameter is provided for the pin, this name will be used, so that the pin name can be any string even if it cannot be used as a Python variable name.
+
+Here, a J-K flip flop, as part of an HC7476 integrated circuit, is drawn with input names and pin numbers.
+
+JK \= elm.Ic(pins\=\[elm.IcPin(name\='>', pin\='1', side\='left'),
+                  elm.IcPin(name\='K', pin\='16', side\='left'),
+                  elm.IcPin(name\='J', pin\='4', side\='left'),
+                  elm.IcPin(name\='$\\overline{Q}$', pin\='14', side\='right', anchorname\='QBAR'),
+                  elm.IcPin(name\='Q', pin\='15', side\='right')\],
+            edgepadW \= .5,  \# Make it a bit wider
+            pinspacing\=1).label('HC7476', 'bottom', fontsize\=12)
+display(JK)
+
+Notice the use of $overline{Q}$ to acheive the label on the inverting output. The anchor positions can be accessed using attributes, such as JK.Q for the non-inverting output. However, inverting output is named $overline{Q}, which is not accessible using the typical dot notation. It could be accessed using getattr(JK, ‘$overline{Q}$’), but to avoid this an alternative anchorname of QBAR was defined.
+
+#### Multiplexers
+
+Multiplexers and demultiplexers are drawn with the [`schemdraw.elements.intcircuits.Multiplexer`](#schemdraw.elements.intcircuits.Multiplexer "schemdraw.elements.intcircuits.Multiplexer") class which wraps the Ic class.
+
+elm.Multiplexer(
+    pins\=\[elm.IcPin(name\='C', side\='L'),
+          elm.IcPin(name\='B', side\='L'),
+          elm.IcPin(name\='A', side\='L'),
+          elm.IcPin(name\='Q', side\='R'),
+          elm.IcPin(name\='T', side\='B', invert\=True)\],
+    edgepadH\=-.5)
+
+See the [Circuit Gallery](#gallery) for more examples.
+
+#### Seven-Segment Display
+
+A seven-segment display, in [`schemdraw.elements.intcircuits.SevenSegment`](#schemdraw.elements.intcircuits.SevenSegment "schemdraw.elements.intcircuits.SevenSegment"), provides a single digit with several options including decimal point and common anode or common cathode mode. The [`schemdraw.elements.intcircuits.sevensegdigit()`](#schemdraw.elements.intcircuits.sevensegdigit "schemdraw.elements.intcircuits.sevensegdigit") method generates a list of Segment objects that can be used to add a digit to another element, for example to make a multi-digit display.
+
+#### DIP Integrated Circuits
+
+Integrated circuits can be drawn in dual-inline package style with [`schemdraw.elements.intcircuits.IcDIP`](#schemdraw.elements.intcircuits.IcDIP "schemdraw.elements.intcircuits.IcDIP"). Anchors allow connecting elements externally to show the IC in a circuit, or interanally to show the internal configuration of the IC (see [741 Opamp, DIP Layout](#dip741).)
+
+#### Predefined ICs
+
+A few common integrated circuits are predefined as shown below.
+
+### Connectors
+
+All connectors are defined with a default pin spacing of 0.6, matching the default pin spacing of the [`schemdraw.elements.intcircuits.Ic`](#schemdraw.elements.intcircuits.Ic "schemdraw.elements.intcircuits.Ic") class, for easy connection of multiple signals.
+
+#### Headers
+
+A [`schemdraw.elements.connectors.Header`](#schemdraw.elements.connectors.Header "schemdraw.elements.connectors.Header") is a generic Header block with any number of rows and columns. It can have round, square, or screw-head connection points.
+
+Header pins are given anchor names pin1, pin2, etc. Pin number labels and anchor names can be ordered left-to-right (lr), up-to-down (ud), or counterclockwise (ccw) like a traditional IC, depending on the numbering argument. The flip argument can be set True to put pin 1 at the bottom.
+
+A [`schemdraw.elements.connectors.Jumper`](#schemdraw.elements.connectors.Jumper "schemdraw.elements.connectors.Jumper") element is also defined, as a simple rectangle, for easy placing onto a header.
+
+J \= d.add(elm.Header(cols\=2, style\='square'))
+d.add(elm.Jumper().at(J.pin3).fill('lightgray'))
+
+#### D-Sub Connectors
+
+Both [`schemdraw.elements.connectors.DB9`](#schemdraw.elements.connectors.DB9 "schemdraw.elements.connectors.DB9") and [`schemdraw.elements.connectors.DB25`](#schemdraw.elements.connectors.DB25 "schemdraw.elements.connectors.DB25") subminiature connectors are defined, with anchors pin1 through pin9 or pin25.
+
+#### Multiple Lines
+
+The [`schemdraw.elements.connectors.RightLines`](#schemdraw.elements.connectors.RightLines "schemdraw.elements.connectors.RightLines") and [`schemdraw.elements.connectors.OrthoLines`](#schemdraw.elements.connectors.OrthoLines "schemdraw.elements.connectors.OrthoLines") elements are useful for connecting multiple pins of an integrated circuit or header all at once. Both need an at and to location specified, along with the n parameter for setting the number of lines to draw. Use RightLines when the Headers are perpindicular to each other.
+
+D1 \= d.add(elm.Ic(pins\=\[elm.IcPin(name\='A', side\='t', slot\='1/4'),
+                        elm.IcPin(name\='B', side\='t', slot\='2/4'),
+                        elm.IcPin(name\='C', side\='t', slot\='3/4'),
+                        elm.IcPin(name\='D', side\='t', slot\='4/4')\]))
+D2 \= d.add(elm.Header(rows\=4).at((5,4)))
+d.add(elm.RightLines(n\=4).at(D2.pin1).to(D1.D).label('RightLines'))
+
+OrthoLines draw a z-shaped orthogonal connection. Use OrthoLines when the Headers are parallel but vertically offset. Use the xstart parameter, between 0 and 1, to specify the position where the first OrthoLine turns vertical.
+
+D1 \= d.add(elm.Ic(pins\=\[elm.IcPin(name\='A', side\='r', slot\='1/4'),
+                        elm.IcPin(name\='B', side\='r', slot\='2/4'),
+                        elm.IcPin(name\='C', side\='r', slot\='3/4'),
+                        elm.IcPin(name\='D', side\='r', slot\='4/4')\]))
+D2 \= d.add(elm.Header(rows\=4).at((7, \-3)))
+d.add(elm.OrthoLines(n\=4).at(D1.D).to(D2.pin1).label('OrthoLines'))
+
+#### Data Busses
+
+Sometimes, multiple I/O pins to an integrated circuit are lumped together into a data bus. The connections to a bus can be drawn using the [`schemdraw.elements.connectors.BusConnect`](#schemdraw.elements.connectors.BusConnect "schemdraw.elements.connectors.BusConnect") element, which takes n the number of data lines and an argument. [`schemdraw.elements.connectors.BusLine`](#schemdraw.elements.connectors.BusLine "schemdraw.elements.connectors.BusLine") is simply a wider line used to extend the full bus to its destination.
+
+BusConnect elements define anchors start, end on the endpoints of the wide bus line, and pin1, pin2, etc. for the individual signals.
+
+J \= d.add(elm.Header(rows\=6))
+B \= d.add(elm.BusConnect(n\=6).at(J.pin1))
+d.add(elm.BusLine().down().at(B.end).length(3))
+B2 \= d.add(elm.BusConnect(n\=6).anchor('start').reverse())
+d.add(elm.Header(rows\=6).at(B2.pin1).anchor('pin1'))
+
+#### Outlets
+
+Power outlets and plugs are drawn using OutletX classes, with international styles A through L. Each has anchors hot, neutral, and ground (if applicable). The plug parameter fills the prongs to indicate a plug versus an outlet.
+
+### Compound Elements
+
+Several compound elements defined based on other basic elements.
+
+#### Optocoupler
+
+[`schemdraw.elements.compound.Optocoupler`](#schemdraw.elements.compound.Optocoupler "schemdraw.elements.compound.Optocoupler") can be drawn with or without a base contact.
+
+#### Relay
+
+[`schemdraw.elements.compound.Relay`](#schemdraw.elements.compound.Relay "schemdraw.elements.compound.Relay") can be drawn with different options for switches and inductor solenoids.
+
+#### Wheatstone
+
+[`schemdraw.elements.compound.Wheatstone`](#schemdraw.elements.compound.Wheatstone "schemdraw.elements.compound.Wheatstone") can be drawn with or without the output voltage taps. The labels argument specifies a list of labels for each resistor.
+
+#### Rectifier
+
+[`schemdraw.elements.compound.Rectifier`](#schemdraw.elements.compound.Rectifier "schemdraw.elements.compound.Rectifier") draws four diodes at 45 degree angles. The labels argument specifies a list of labels for each diode.
+
+### Digital Logic
+
+Logic gates can be drawn by importing the [`schemdraw.logic.logic`](#module-schemdraw.logic.logic "schemdraw.logic.logic") module:
+
+from schemdraw import logic
+
+Logic gates are shown below. Gates define anchors for out and in1, in2, etc. Buf, Not, and NotNot, and their Schmitt-trigger counterparts, are two-terminal elements that extend leads.
+
+Gates with more than 2 inputs can be created using the inputs parameter. With more than 3 inputs, the back of the gate will extend up and down.
+
+logic.Nand(inputs\=3)
+
+logic.Nor(inputs\=4)
+
+Finally, any input can be pre-inverted (active low) using the inputnots keyword with a list of input numbers, starting at 1 to match the anchor names, on which to add an invert bubble.
+
+logic.Nand(inputs\=3, inputnots\=\[1\])
+
+#### Logic Parser
+
+Logic trees can also be created from a string logic expression such as “(a and b) or c” using using [`schemdraw.parsing.logic_parser.logicparse()`](#schemdraw.parsing.logic_parser.logicparse "schemdraw.parsing.logic_parser.logicparse"). The logic parser requires the [pyparsing](https://pyparsing-docs.readthedocs.io/en/latest/) module.
+
+Examples:
+
+from schemdraw.parsing import logicparse
+logicparse('not ((w and x) or (y and z))', outlabel\='$\\overline{Q}$')
+
+logicparse('((a xor b) and (b or c) and (d or e)) or ((w and x) or (y and z))')
+
+Logicparse understands spelled-out logic functions “and”, “or”, “nand”, “nor”, “xor”, “xnor”, “not”, but also common symbols such as “+”, “&”, “⊕” representing “or”, “and”, and “xor”.
+
+logicparse('¬ (a ∨ b) & (c ⊻ d)')  \# Using symbols
+
+Use the gateH and gateW parameters to adjust how gates line up:
+
+logicparse('(not a) and b or c', gateH\=.5)
+
+#### Truth Tables
+
+Simple tables can be drawn using the [`schemdraw.logic.table.Table`](#schemdraw.logic.table.Table "schemdraw.logic.table.Table") class. This class is included in the logic module as its primary purpose was for drawing logical truth tables.
+
+The tables are defined using typical Markdown syntax. The colfmt parameter works like the LaTeX tabular environment parameter for defining lines to draw between table columns: “cc|c” draws three centered columns, with a vertical line before the last column. Each column must be specified with a ‘c’, ‘r’, or ‘l’ for center, right, or left justification Two pipes (||), or a double pipe character (ǁ) draw a double bar between columns. Row lines are added to the table string itself, with either — or \=== in the row.
+
+table \= '''
+ A | B | C
+\---|---|---
+ 0 | 0 | 0
+ 0 | 1 | 0
+ 1 | 0 | 0
+ 1 | 1 | 1
+'''
+logic.Table(table, colfmt\='cc||c')
+
+#### Karnaugh Maps
+
+Karnaugh Maps, or K-Maps, are useful for simplifying a logical truth table into the smallest number of gates. Schemdraw can draw K-Maps, with 2, 3, or 4 input variables, using the [`schemdraw.logic.kmap.Kmap`](#schemdraw.logic.kmap.Kmap "schemdraw.logic.kmap.Kmap") class.
+
+logic.Kmap(names\='ABCD')
+
+The names parameter must be a string with 2, 3, or 4 characters, each defining the name of one input variable. The truthtable parameter contains a list of tuples defining the logic values to display in the map. The first len(names) elements are 0’s and 1’s defining the position of the cell, and the last element is the string to display in that cell. The default parameter is a string to show in each cell of the K-Map when that cell is undefined in the truthtable.
+
+For example, this 2x2 K-Map has a ‘1’ in the 01 position, and 0’s elsewhere:
+
+logic.Kmap(names\='AB', truthtable\=\[('01', '1')\])
+
+K-Maps are typically used by grouping sets of 1’s together. These groupings can be drawn using the groups parameter. The keys of the groups dictionary define which cells to group together, and the values of the dictionary define style parameters for the circle around the group. Each key must be a string of length len(names), with either a 0, 1, or . in each position. As an example, with names=’ABCD’, a group key of “1…” will place a circle around all cells where A=1. Or “.00.” draws a circle around all cells where B and C are both 0. Groups will automatically “wrap” around the edges. Parameters of the style dictionary include color, fill, lw, and ls.
+
+logic.Kmap(names\='ABCD',
+           truthtable\=\[('1100', '1'),
+                       ('1101', '1'),
+                       ('1111', '1'),
+                       ('1110', '1'),
+                       ('0101', '1'),
+                       ('0111', 'X'),
+                       ('1101', '1'),
+                       ('1111', '1'),
+                       ('0000', '1'),
+                       ('1000', '1')\],
+           groups\={'11..': {'color': 'red', 'fill': '#ff000033'},
+                   '.1.1': {'color': 'blue', 'fill': '#0000ff33'},
+                   '.000': {'color': 'green', 'fill': '#00ff0033'}})
+
+### Timing Diagrams
+
+Digital timing diagrams may be drawn using the [`schemdraw.logic.timing.TimingDiagram`](#schemdraw.logic.timing.TimingDiagram "schemdraw.logic.timing.TimingDiagram") Element in the `schemdraw.logic` module.
+
+Timing diagrams are set up using the WaveJSON syntax used by the [WaveDrom](https://wavedrom.com/) JavaScript application.
+
+from schemdraw import logic
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'A', 'wave': '0..1..01.'},
+        {'name': 'B', 'wave': '101..0...'}\]})
+
+The input is a dictionary containing a signal, which is a list of each wave to show in the diagram. Each signal is a dictionary which must contain a name and wave. An empty dictionary leaves a blank row in the diagram.
+
+Every character in the wave specifies the state of the wave for one period. A dot . means the previous state is repeated. Wave characters ‘n’ and ‘p’ specify clock signals, and ‘N’, and ‘P’ draw clocks with arrows. ‘1’ and ‘0’ are used to define high and low signals. ‘2’ draws a data block, and ‘3’ through ‘9’ draw data filled with a color. ‘x’ draws a don’t-care or undefined data state.
+
+Data blocks can be labeled by adding a ‘data’ item to the wave’s dictionary.
+
+This example shows the different wave sections:
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'clock n', 'wave': 'n......'},
+        {'name': 'clock p', 'wave': 'p......'},
+        {'name': 'clock N', 'wave': 'N......'},
+        {'name': 'clock P', 'wave': 'P......'},
+        {},
+        {'name': '1s and 0s', 'wave': '0.1.01.'},
+        {'name': 'data', 'wave': '2..=.2.'},  \# '=' is the same as '2'
+        {'name': 'data named', 'wave': '3.4.6..', 'data': \['A', 'B', 'C'\]},
+        {'name': 'dont care', 'wave': 'xx..x..'},
+        {},
+        {'name': 'high z', 'wave': 'z.10.z.'},
+        {'name': 'pull up/down', 'wave': '0u..d.1'},
+    \]})
+
+Putting them together in a more realistic example:
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'clk', 'wave': 'P......'},
+        {'name': 'bus', 'wave': 'x.==.=x', 'data': \['head', 'body', 'tail'\]},
+        {'name': 'wire', 'wave': '0.1..0.'}\]})
+
+The config key, containing a dictionary with hscale, may be used to change the width of one period in the diagram:
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'clk', 'wave': 'P......'},
+        {'name': 'bus', 'wave': 'x.==.=x', 'data': \['head', 'body', 'tail'\]},
+        {'name': 'wire', 'wave': '0.1..0.'}\],
+     'config': {'hscale': 2}})
+
+Signals may also be nested into different groups:
+
+logic.TimingDiagram(
+    {'signal': \['Group',
+      \['Set 1',
+        {'name': 'A', 'wave': '0..1..01.'},
+        {'name': 'B', 'wave': '101..0...'}\],
+      \['Set 2',
+        {'name': 'C', 'wave': '0..1..01.'},
+        {'name': 'D', 'wave': '101..0...'}\]
+               \]})
+
+Using the node key in a waveform, plus the edge key in the top-level dictionary, provides a way to show transitions between different edges.
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'A', 'wave': '0..1..01.', 'node': '...a.....'},
+        {'name': 'B', 'wave': '101..0...', 'node': '.....b...'}\],
+     'edge': \['a~>b'\]    })
+
+Each string in the edge list must start and end with a node name (single character). The characters between them define the type of connecting line: ‘-’ for straight line, ‘~’ for curve, ‘-|’ for orthogonal lines, and < or > to include arrowheads. For example, ‘a-~>b’ draws a curved line with arrowhead between nodes a and b.
+
+#### Using JSON
+
+Because the examples from WaveDrom use JavaScript and JSON, they sometimes cannot be directly pasted into Python as dictionaries. The `schemdraw.logic.timing.TimingDiagram.from_json()` method allows input of the WaveJSON as a string pasted directly from the Javascript/JSON examples without modification.
+
+Notice lack of quoting on the dictionary keys, requiring the from\_json method to parse the string.
+
+logic.TimingDiagram.from\_json('''{ signal: \[
+  { name: "clk",  wave: "P......" },
+  { name: "bus",  wave: "x.==.=x", data: \["head", "body", "tail", "data"\] },
+  { name: "wire", wave: "0.1..0." }
+\]}''')
+
+#### Schemdraw’s Customizations
+
+Schemdraw extends the WaveJSON spcification with a few additional options.
+
+##### Style Parameters
+
+Each wave dictionary accpets a color and lw parameter. The rise/fall time for transitions can be set using the risetime parameter to TimingDiagram. Other colors and font sizes may be speficied using keyword arguments to [`schemdraw.logic.timing.TimingDiagram`](#schemdraw.logic.timing.TimingDiagram "schemdraw.logic.timing.TimingDiagram").
+
+##### Asynchronous Signals
+
+WaveDrom does not have a means for defining asynchronous signals - all waves must transition on period boundaries. Schemdraw adds asyncrhonous signals using the async parameter, as a list of period multiples for each transition in the wave. Note the beginning and end time of the wave must also be specified, so the length of the async list must be one more than the length of wave.
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'clk', 'wave': 'n......'},
+        {'name': 'B', 'wave': '010', 'async': \[0, 1.6, 4.25, 7\]}\]},    risetime\=.03)
+
+##### Extended Edge Notation
+
+Additional “edge” string notations are allowed for more complex labeling of edge timings, including asynchronous start and end times and labels just above or below a wave.
+
+Each edge string using this syntax takes the form
+
+'\[WaveNum:Period\]<->\[WaveNum:Period\]{color,ls} Label'
+
+Everything after the first space will be drawn as the label in the center of the line. The values in square brackets designate the start and end position of the line. WaveNum is the integer row number (starting at 0) of the wave, and Period is the possibly fractional number of periods in time for the node. WaveNum may be appended by a ^ or v to designate notations just above, or just below, the wave, respectively.
+
+Between the two square-bracket expressions is the standard line/arrow type designator. In optional curly braces, the line color and linestyle may be entered.
+
+Some examples are shown here:
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'A', 'wave': 'x3...x'},
+        {'name': 'B', 'wave': 'x6.6.x'}\],
+     'edge': \['\[0^:1\]+\[0^:5\] $t\_1$',              '\[1^:1\]<->\[1^:3\] $t\_o$',              '\[0^:3\]-\[1v:3\]{gray,:}',             \]},
+    ygap\=.5, grid\=False)
+
+When placing edge labels above or below the wave, it can be useful to add the ygap parameter to TimingDiagram to increase the spacing between waves.
+
+See the [Timing Diagrams](#gallerytiming) Gallery for more examples.
+
+### Signal Processing
+
+Signal processing elements can be drawn by importing the [`schemdraw.dsp.dsp`](#module-schemdraw.dsp.dsp "schemdraw.dsp.dsp") module:
+
+from schemdraw import dsp
+
+Because each element may have multiple connections in and out, these elements are not 2-terminal elements that extend “leads”, so they must be manually connected with Line or Arrow elements. The square elements define anchors ‘N’, ‘S’, ‘E’, and ‘W’ for the four directions. Circle-based elements also includ ‘NE’, ‘NW’, ‘SE’, and ‘SW’ anchors. Directional elements, such as Amp, Adc, and Dac define anchors input and out.
+
+Labels are placed in the center of the element. The generic Square and Circle elements can be used with a label to define other operations. For example, an integrator may be created using:
+
+dsp.Square().label('$\\int$')
+
+### Flowcharts and Diagrams
+
+Schemdraw provides basic symbols for flowcharting and state diagrams. The [`schemdraw.flow.flow`](#module-schemdraw.flow.flow "schemdraw.flow.flow") module contains a set of functions for defining flowchart blocks and connecting lines that can be added to schemdraw Drawings.
+
+from schemdraw import flow
+
+Flowchart blocks:
+
+Some elements have been defined with multiple names, which can be used depending on the context or user preference:
+
+All flowchart symbols have 16 anchor positions named for the compass directions: ‘N’, ‘S’, ‘E’, ‘W’, ‘NE’, ‘SE, ‘NNE’, etc., plus a ‘center’ anchor.
+
+The [`schemdraw.elements.intcircuits.Ic`](#schemdraw.elements.intcircuits.Ic "schemdraw.elements.intcircuits.Ic") element can be used with the flowchart elements to create blocks with other inputs/outputs per side if needed.
+
+The size of each block must be specified manually using w and h or r parameters to size each block to fit any labels.
+
+#### Connecting Lines
+
+Typical flowcharts will use Line or Arrow elements to connect the boxes. The line and arrow elements have been included in the flow module for convenience.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=10, unit\=.5)
+    d += flow.Terminal().label('Start')
+    d += flow.Arrow()
+    d += flow.Process().label('Do something').drop('E')
+    d += flow.Arrow().right()
+    d += flow.Process().label('Do something\\nelse')
+
+Some flow diagrams, such as State Machine diagrams, often use curved connectors between states. Several Arc connectors are available. Each Arc element takes an arrow parameter, which may be ‘->’, ‘<-’, or ‘<->’, to define the end(s) on which to draw arrowheads.
+
+##### Arc2
+
+Arc2 draws a symmetric quadratic Bezier curve between the endpoints, with curvature controlled by parameter k. Endpoints of the arc should be specified using at() and to() methods.
+
+d += (a := flow.State().label('A'))
+d += (b := flow.State(arrow\='->').label('B').at((4, 0)))
+d += flow.Arc2(arrow\='->').at(a.NE).to(b.NW).color('deeppink').label('Arc2')
+d += flow.Arc2(k\=.2, arrow\='<->').at(b.SW).to(a.SE).color('mediumblue').label('Arc2')
+
+##### ArcZ and ArcN
+
+These draw symmetric cubic Bezier curves between the endpoints. The ArcZ curve approaches the endpoints horizontally, and ArcN approaches them vertically.
+
+d += (a := flow.State().label('A'))
+d += (b := flow.State().label('B').at((4, 4)))
+d += (c := flow.State().label('C').at((8, 0)))
+d += flow.ArcN(arrow\='<->').at(a.N).to(b.S).color('deeppink').label('ArcN')
+d += flow.ArcZ(arrow\='<->').at(b.E).to(c.W).color('mediumblue').label('ArcZ')
+
+##### Arc3
+
+The Arc3 curve is an arbitrary cubic Bezier curve, defined by endpoints and angle of approach to each endpoint. ArcZ and ArcN are simply Arc3 defined with the angles as 0 and 180, or 90 and 270, respectively.
+
+d += (a := flow.State().label('A'))
+d += (b := flow.State().label('B').at((3, 3)))
+d += flow.Arc3(th1\=75, th2\=-45, arrow\='<->').at(a.N).to(b.SE).color('deeppink').label('Arc3')
+
+##### ArcLoop
+
+The ArcLoop curve draws a partial circle that intersects the two endpoints, with the given radius. Often used in state machine diagrams to indicate cases where the state does not change.
+
+d += (a := flow.State().label('A'))
+d += flow.ArcLoop(arrow\='<-').at(a.NW).to(a.NNE).color('mediumblue').label('ArcLoop', halign\='center')
+
+#### Decisions
+
+To label the decision branches, the [`schemdraw.flow.flow.Decision`](#schemdraw.flow.flow.Decision "schemdraw.flow.flow.Decision") element takes keyword arguments for each cardinal direction. For example:
+
+decision \= flow.Decision(W\='Yes', E\='No', S\='Maybe').label('Question?')
+
+#### Layout and Flow
+
+Without any directions specified, boxes flow top to bottom (see left image). If a direction is specified (right image), the flow will continue in that direction, starting the next arrow at an appropriate anchor. Otherwise, the drop method is useful for specifing where to begin the next arrow.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=10, unit\=.5)
+    d += flow.Terminal().label('Start')
+    d += flow.Arrow()
+    d += flow.Process().label('Step 1')
+    d += flow.Arrow()
+    d += flow.Process().label('Step 2').drop('E')
+    d += flow.Arrow().right()
+    d += flow.Connect().label('Next')
+
+    d += flow.Terminal().label('Start').at((4, 0))
+    d += flow.Arrow().theta(\-45)
+    d += flow.Process().label('Step 1')
+    d += flow.Arrow()
+    d += flow.Process().label('Step 2').drop('E')
+    d += flow.Arrow().right()
+    d += flow.Connect().label('Next')
+
+See the [Flowcharting](#galleryflow) Gallery for more examples.
+
+Circuit Gallery
+-----------------------------------------------------------
+
+### Analog Circuits
+
+#### Discharging capacitor
+
+Shows how to connect to a switch with anchors.
+
+with schemdraw.Drawing() as d:
+    d += (V1 := elm.SourceV().label('5V'))
+    d += elm.Line().right(d.unit\*.75)
+    d += (S1 := elm.SwitchSpdt2(action\='close').up().anchor('b').label('$t=0$', loc\='rgt'))
+    d += elm.Line().right(d.unit\*.75).at(S1.c)
+    d += elm.Resistor().down().label('$100\\Omega$').label(\['+','$v\_o$','-'\], loc\='bot')
+    d += elm.Line().to(V1.start)
+    d += elm.Capacitor().at(S1.a).toy(V1.start).label('1$\\mu$F').dot()
+
+#### Capacitor Network
+
+Shows how to use endpoints to specify exact start and end placement.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    d += (C1 := elm.Capacitor().label('8nF').idot().label('a', 'left'))
+    d += (C2 := elm.Capacitor().label('18nF'))
+    d += (C3 := elm.Capacitor().down().label('8nF', loc\='bottom'))
+    d += (C4 := elm.Capacitor().left().label('32nF'))
+    d += (C5 := elm.Capacitor().label('40nF', loc\='bottom').dot().label('b', 'left'))
+    d += (C6 := elm.Capacitor().endpoints(C1.end, C5.start).label('2.8nF'))
+    d += (C7 := elm.Capacitor().endpoints(C2.end, C5.start)
+          .label('5.6nF', loc\='center', ofst\=(\-.3, \-.1), halign\='right', valign\='bottom'))
+
+#### ECE201-Style Circuit
+
+This example demonstrate use of push() and pop() and using the ‘tox’ and ‘toy’ methods.
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=2)  \# unit=2 makes elements have shorter than normal leads
+    d.push()
+    d += (R1 := elm.Resistor().down().label('20Ω'))
+    d += (V1 := elm.SourceV().down().reverse().label('120V'))
+    d += elm.Line().right(3).dot()
+    d.pop()
+    d += elm.Line().right(3).dot()
+    d += elm.SourceV().down().reverse().label('60V')
+    d += elm.Resistor().label('5Ω').dot()
+    d += elm.Line().right(3).dot()
+    d += elm.SourceI().up().label('36A')
+    d += elm.Resistor().label('10Ω').dot()
+    d += elm.Line().left(3).hold()
+    d += elm.Line().right(3).dot()
+    d += (R6 := elm.Resistor().toy(V1.end).label('6Ω').dot())
+    d += elm.Line().left(3).hold()
+    d += elm.Resistor().right().at(R6.start).label('1.6Ω').dot(open\=True).label('a', 'right')
+    d += elm.Line().right().at(R6.end).dot(open\=True).label('b', 'right')
+
+#### Loop Currents
+
+Using the [`schemdraw.elements.lines.LoopCurrent`](#schemdraw.elements.lines.LoopCurrent "schemdraw.elements.lines.LoopCurrent") element to add loop currents, and rotating a label to make it fit.
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=5)
+    d += (V1 := elm.SourceV().label('20V'))
+    d += (R1 := elm.Resistor().right().label('400Ω'))
+    d += elm.Dot()
+    d.push()
+    d += (R2 := elm.Resistor().down().label('100Ω', loc\='bot', rotate\=True))
+    d += elm.Dot()
+    d.pop()
+    d += (L1 := elm.Line())
+    d += (I1 := elm.SourceI().down().label('1A', loc\='bot'))
+    d += (L2 := elm.Line().tox(V1.start))
+    d += elm.LoopCurrent(\[R1,R2,L2,V1\], pad\=1.25).label('$I\_1$')
+    d += elm.LoopCurrent(\[R1,I1,L2,R2\], pad\=1.25).label('$I\_2$')    \# Use R1 as top element for both so they get the same height
+
+#### AC Loop Analysis
+
+Another good problem for ECE students…
+
+with schemdraw.Drawing() as d:
+    d += (I1 := elm.SourceI().label('5∠0° A').dot())
+    d.push()
+    d += elm.Capacitor().right().label('-j3Ω').dot()
+    d += elm.Inductor().down().label('j2Ω').dot().hold()
+    d += elm.Resistor().right().label('5Ω').dot()
+    d += (V1 := elm.SourceV().down().reverse().label('5∠-90° V', loc\='bot'))
+    d += elm.Line().tox(I1.start)
+    d.pop()
+    d += elm.Line().up(d.unit\*.8)
+    d += (L1 := elm.Inductor().tox(V1.start).label('j3Ω'))
+    d += elm.Line().down(d.unit\*.8)
+    d += elm.CurrentLabel(top\=False, ofst\=.3).at(L1).label('$i\_g$')
+
+#### Infinite Transmission Line
+
+Elements can be added inside for-loops if you need multiples. The ellipsis is just another circuit element, called DotDotDot since Ellipsis is a reserved keyword in Python. This also demonstrates the [`schemdraw.elements.ElementDrawing`](#schemdraw.elements.ElementDrawing "schemdraw.elements.ElementDrawing") class to merge multiple elements into a single definition.
+
+with schemdraw.Drawing(show\=False) as d1:
+    d1 += elm.Resistor()
+    d1.push()
+    d1 += elm.Capacitor().down()
+    d1 += elm.Line().left()
+    d1.pop()
+
+with schemdraw.Drawing() as d2:
+    for i in range(3):
+        d2 += elm.ElementDrawing(d1)
+
+    d2.push()
+    d2 += elm.Line().length(d2.unit/6)
+    d2 += elm.DotDotDot()
+    d2 += elm.ElementDrawing(d1)
+    d2.pop()
+    d2.here \= (d2.here\[0\], d2.here\[1\]\-d2.unit)
+    d2 += elm.Line().right().length(d2.unit/6)
+    d2 += elm.DotDotDot()
+
+#### Power supply
+
+Notice the diodes could be added individually, but here the built-in Rectifier element is used instead. Also note the use of newline characters inside resistor and capacitor labels.
+
+with schemdraw.Drawing() as d:
+    d.config(inches\_per\_unit\=.5, unit\=3)
+    d += (D := elm.Rectifier())
+    d += elm.Line().left(d.unit\*1.5).at(D.N).dot(open\=True).idot()
+    d += elm.Line().left(d.unit\*1.5).at(D.S).dot(open\=True).idot()
+    d += (G := elm.Gap().toy(D.N).label(\['–', 'AC IN', '+'\]))
+
+    d += (top := elm.Line().right(d.unit\*3).at(D.E).idot())
+    d += (Q2 := elm.BjtNpn(circle\=True).up().anchor('collector').label('Q2\\n2n3055'))
+    d += elm.Line().down(d.unit/2).at(Q2.base)
+    d += (Q2b := elm.Dot())
+    d += elm.Line().left(d.unit/3)
+    d += (Q1 := elm.BjtNpn(circle\=True).up().anchor('emitter').label('Q1\\n    2n3054'))
+    d += elm.Line().at(Q1.collector).toy(top.center).dot()
+
+    d += elm.Line().down(d.unit/2).at(Q1.base).dot()
+    d += elm.Zener().down().reverse().label('D2\\n500mA', loc\='bot').dot()
+    d += (G := elm.Ground())
+    d += elm.Line().left().dot()
+    d += elm.Capacitor(polar\=True).up().reverse().label('C2\\n100$\\mu$F\\n50V', loc\='bot').dot()
+    d += elm.Line().right().hold()
+    d += elm.Resistor().toy(top.end).label('R1\\n2.2K\\n50V', loc\='bot').dot()
+
+    d.move(dx\=-d.unit, dy\=0)
+    d += elm.Capacitor(polar\=True).toy(G.start).flip().label('C1\\n 1000$\\mu$F\\n50V').dot().idot()
+    d += elm.Line().at(G.start).tox(D.W)
+    d += elm.Line().toy(D.W).dot()
+
+    d += elm.Resistor().right().at(Q2b.center).label('R2').label('56$\\Omega$ 1W', loc\='bot').dot()
+    d.push()
+    d += elm.Line().toy(top.start).dot()
+    d += elm.Line().tox(Q2.emitter)
+    d.pop()
+    d += elm.Capacitor(polar\=True).toy(G.start).label('C3\\n470$\\mu$F\\n50V', loc\='bot').dot()
+    d += elm.Line().tox(G.start).hold()
+    d += elm.Line().right().dot()
+    d += elm.Resistor().toy(top.center).label('R3\\n10K\\n1W', loc\='bot').dot()
+    d += elm.Line().left().hold()
+    d += elm.Line().right()
+    d += elm.Dot(open\=True)
+    d += elm.Gap().toy(G.start).label(\['+', '$V\_{out}$', '–'\])
+    d += elm.Dot(open\=True)
+    d += elm.Line().left()
+
+#### 5-transistor Operational Transconductance Amplifer (OTA)
+
+Note the use of current labels to show the bias currents.
+
+with schemdraw.Drawing() as d:
+    \# tail transistor
+    d += (Q1 := elm.AnalogNFet()).anchor('source').theta(0).reverse()
+    d += elm.Line().down().length(0.5)
+    ground \= d.here
+    d += elm.Ground()
+
+    \# input pair
+    d += elm.Line().left().length(1).at(Q1.drain)
+    d += (Q2 := elm.AnalogNFet()).anchor('source').theta(0).reverse()
+
+    d += elm.Dot().at(Q1.drain)
+    d += elm.Line().right().length(1)
+    d += (Q3 := elm.AnalogNFet()).anchor('source').theta(0)
+
+    \# current mirror
+    d += (Q4 := elm.AnalogPFet()).anchor('drain').at(Q2.drain).theta(0)
+    d += (Q5 := elm.AnalogPFet()).anchor('drain').at(Q3.drain).theta(0).reverse()
+
+    d += elm.Line().right().at(Q4.gate).to(Q5.gate)
+
+    d += elm.Dot().at(0.5\*(Q4.gate + Q5.gate))
+    d += elm.Line().down().toy(Q4.drain)
+    d += elm.Line().left().tox(Q4.drain)
+    d += elm.Dot()
+
+    \# vcc connection
+    d += elm.Line().right().at(Q4.source).to(Q5.source)
+    d += elm.Dot().at(0.5\*(Q4.source + Q5.source))
+    d += elm.Vdd()
+
+    \# bias source
+    d += elm.Line().left().length(0.25).at(Q1.gate)
+    d += elm.SourceV().down().toy(ground).reverse().scale(0.5).label("Bias")
+    d += elm.Ground()
+
+    \# signal labels
+    d += elm.Tag().at(Q2.gate).label("In+").left()
+    d += elm.Tag().at(Q3.gate).label("In−").right()
+    d += elm.Dot().at(Q3.drain)
+    d += elm.Line().right().tox(Q3.gate)
+    d += elm.Tag().right().label("Out").reverse()
+
+    \# bias currents
+    d += elm.CurrentLabel(length\=1.25, ofst\=0.25).at(Q1).label("20µA")
+    d += elm.CurrentLabel(length\=1.25, ofst\=0.25).at(Q4).label("10µA")
+    d += elm.CurrentLabel(length\=1.25, ofst\=0.25).at(Q5).label("10µA")
+
+#### Quadruple loop negative feedback amplifier
+
+with schemdraw.Drawing() as d:
+    \# place twoports
+    d += (N1 := elm.Nullor()).anchor('center')
+    d += (T1 := elm.TransimpedanceTransactor(reverse\_output\=True)).reverse().flip().anchor('center').at(\[0,\-3\]).label("B")
+    d += (T2 := elm.CurrentTransactor()).reverse().flip().anchor('center').at(\[0,\-6\]).label("D")
+    d += (T3 := elm.VoltageTransactor()).reverse().anchor('center').at(\[0,\-9\]).label("A")
+    d += (T4 := elm.TransadmittanceTransactor(reverse\_output\=True)).reverse().anchor('center').at(\[0,\-12\]).label("C")
+
+    \## make connections
+    \# right side
+    d += elm.Line().at(N1.out\_n).to(T1.in\_n)
+    d += elm.Line().at(T1.in\_p).to(T2.in\_n)
+    d += elm.Line().at(T3.in\_n).to(T4.in\_n)
+
+    d += elm.Line().right().length(1).at(N1.out\_p)
+    pre\_out \= d.here
+    d += (outline := elm.Line()).right().length(1).dot(open\=True)
+    out \= d.here
+    d += elm.Gap().down().label(('+','$V\_o$','–')).toy(N1.out\_n)
+    d += elm.Line().idot(open\=True).down().toy(T4.in\_n)
+    d += elm.Line().left().to(T4.in\_n)
+    d += elm.Dot()
+    d += elm.CurrentLabelInline(direction\='in', ofst\=-0.15).at(outline).label('$I\_o$')
+
+    d += elm.Line().at(T2.in\_p).right().tox(out)
+    d += elm.Dot()
+
+    d += elm.Line().right().at(T4.in\_p).tox(pre\_out)
+    d += elm.Line().up().toy(pre\_out)
+    d += elm.Dot()
+
+    d += elm.Line().right().at(T3.in\_p).tox(pre\_out)
+    d += elm.Dot()
+
+    \# left side
+    d += elm.Line().down().at(N1.in\_n).to(T1.out\_n)
+
+    d += elm.Line().up().at(T3.out\_p).to(T1.out\_p)
+
+    d += elm.Line().left().at(N1.in\_p).length(1)
+    pre\_in \= d.here
+    d += (inline := elm.Line()).length(1).dot(open\=True).left()
+    in\_node \= d.here
+    d += elm.Gap().down().label(('+','$V\_i$','–')).toy(N1.in\_n)
+    d += elm.Line().idot(open\=True).down().toy(T4.out\_n)
+    d += elm.Line().right().to(T4.out\_n)
+    d += elm.CurrentLabelInline(direction\='out', ofst\=-0.15).at(inline).label('$I\_i$')
+
+    d += elm.Line().left().at(T2.out\_p).tox(in\_node)
+    d += elm.Dot()
+    d += elm.Line().left().at(T3.out\_n).tox(in\_node)
+    d += elm.Dot()
+
+    d += elm.Line().left().at(T4.out\_p).tox(pre\_in)
+    d += elm.Line().up().toy(pre\_in)
+    d += elm.Dot()
+
+    d += elm.Line().left().at(T2.out\_n).tox(pre\_in)
+    d += elm.Dot()
+
+### Opamp Circuits
+
+#### Inverting Opamp
+
+with schemdraw.Drawing() as d:
+    d += (op := elm.Opamp(leads\=True))
+    d += elm.Line().down(d.unit/4).at(op.in2)
+    d += elm.Ground(lead\=False)
+    d += (Rin := elm.Resistor().at(op.in1).left().idot().label('$R\_{in}$', loc\='bot').label('$v\_{in}$', loc\='left'))
+    d += elm.Line().up(d.unit/2).at(op.in1)
+    d += elm.Resistor().tox(op.out).label('$R\_f$')
+    d += elm.Line().toy(op.out).dot()
+    d += elm.Line().right(d.unit/4).at(op.out).label('$v\_{o}$', loc\='right')
+
+#### Non-inverting Opamp
+
+with schemdraw.Drawing() as d:
+    d += (op := elm.Opamp(leads\=True))
+    d += (out := elm.Line(at\=op.out).length(.75))
+    d += elm.Line().up().at(op.in1).length(1.5).dot()
+    d.push()
+    d += elm.Resistor().left().label('$R\_1$')
+    d += elm.Ground()
+    d.pop()
+    d += elm.Resistor().tox(op.out).label('$R\_f$')
+    d += elm.Line().toy(op.out).dot()
+    d += elm.Resistor().left().at(op.in2).idot().label('$R\_2$')
+    d += elm.SourceV().down().reverse().label('$v\_{in}$')
+    d += elm.Line().right().dot()
+    d += elm.Resistor().up().label('$R\_3$').hold()
+    d += elm.Line().tox(out.end)
+    d += elm.Gap().toy(op.out).label(\['–','$v\_o$','+'\])
+
+#### Multi-stage amplifier
+
+with schemdraw.Drawing() as d:
+    d += elm.Ground(lead\=False)
+    d += elm.SourceV().label('500mV')
+    d += elm.Resistor().right().label('20k$\\Omega$').dot()
+    d += (O1 := elm.Opamp(leads\=True).anchor('in1'))
+    d += elm.Ground().at(O1.in2)
+    d += elm.Line().up(2).at(O1.in1)
+    d += elm.Resistor().tox(O1.out).label('100k$\\Omega$')
+    d += elm.Line().toy(O1.out).dot()
+    d += elm.Line().right(5).at(O1.out)
+    d += (O2 := elm.Opamp(leads\=True).anchor('in2'))
+    d += elm.Resistor().left().at(O2.in1).idot().label('30k$\\Omega$')
+    d += elm.Ground()
+    d += elm.Line().up(1.5).at(O2.in1)
+    d += elm.Resistor().tox(O2.out).label('90k$\\Omega$')
+    d += elm.Line().toy(O2.out).dot()
+    d += elm.Line().right(1).at(O2.out).label('$v\_{out}$', loc\='rgt')
+
+#### Opamp pin labeling
+
+This example shows how to label pin numbers on a 741 opamp, and connect to the offset anchors. Pin labels are somewhat manually placed; without the ofst and align keywords they will be drawn directly over the anchor position.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    op \= (elm.Opamp().label('741', loc\='center', ofst\=0)
+                 .label('1', 'n1', fontsize\=9, ofst\=(\-.1, \-.25), halign\='right', valign\='top')
+                 .label('5', 'n1a', fontsize\=9, ofst\=(\-.1, \-.25), halign\='right', valign\='top')
+                 .label('4', 'vs', fontsize\=9, ofst\=(\-.1, \-.2), halign\='right', valign\='top')
+                 .label('7', 'vd', fontsize\=9, ofst\=(\-.1, .2), halign\='right', valign\='bottom')
+                 .label('2', 'in1', fontsize\=9, ofst\=(\-.1, .1), halign\='right', valign\='bottom')
+                 .label('3', 'in2', fontsize\=9, ofst\=(\-.1, .1), halign\='right', valign\='bottom')
+                 .label('6', 'out', fontsize\=9, ofst\=(\-.1, .1), halign\='left', valign\='bottom'))
+    d += op
+    d += elm.Line().left(.5).at(op.in1)
+    d += elm.Line().down(d.unit/2)
+    d += elm.Ground(lead\=False)
+    d += elm.Line().left(.5).at(op.in2)
+    d += elm.Line().right(.5).at(op.out).label('$V\_o$', 'right')
+    d += elm.Line().up(1).at(op.vd).label('$+V\_s$', 'right')
+    d += (trim := elm.Potentiometer().down().at(op.n1).flip().scale(0.7))
+    d += elm.Line().tox(op.n1a)
+    d += elm.Line().up().to(op.n1a)
+    d += elm.Line().at(trim.tap).tox(op.vs).dot()
+    d.push()
+    d += elm.Line().down(d.unit/3)
+    d += elm.Ground()
+    d.pop()
+    d += elm.Line().toy(op.vs)
+
+#### Triaxial Cable Driver
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=10)
+    d += elm.Line().length(d.unit/5).label('V', 'left')
+    d += (smu := elm.Opamp(sign\=False).anchor('in2')
+                      .label('SMU', 'center', ofst\=\[\-.4, 0\], halign\='center', valign\='center'))
+    d += elm.Line().at(smu.out).length(.3)
+    d.push()
+    d += elm.Line().length(d.unit/4)
+    d += (triax := elm.Triax(length\=5, shieldofststart\=.75))
+    d.pop()
+    d += elm.Resistor().up().scale(0.6).idot()
+    d += elm.Line().left().dot()
+    d += elm.Wire('|-').to(smu.in1).hold()
+    d += elm.Wire('|-').delta(d.unit/5, d.unit/5)
+    d += (buf := elm.Opamp(sign\=False).anchor('in2').scale(0.6)
+                         .label('BUF', 'center', ofst\=(\-.4, 0), halign\='center', valign\='center'))
+
+    d += elm.Line().left(d.unit/5).at(buf.in1)
+    d += elm.Wire('n').to(buf.out, dx\=.5).dot()
+    d += elm.Wire('-|').at(buf.out).to(triax.guardstart\_top)
+    d += elm.GroundChassis().at(triax.shieldcenter)
+
+### Digital Logic
+
+Logic gate definitions are in the [`schemdraw.logic.logic`](#module-schemdraw.logic.logic "schemdraw.logic.logic") module. Here it was imported with
+
+from schemdraw import logic
+
+#### Half Adder
+
+Notice the half and full adders set the drawing unit to 0.5 so the lines aren’t quite as long and look better with logic gates.
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=0.5)
+    d += (S := logic.Xor().label('S', 'right'))
+    d += logic.Line().left(d.unit\*2).at(S.in1).idot().label('A', 'left')
+    d += (B := logic.Line().left().at(S.in2).dot())
+    d += logic.Line().left().label('B', 'left')
+    d += logic.Line().down(d.unit\*3).at(S.in1)
+    d += (C := logic.And().right().anchor('in1').label('C', 'right'))
+    d += logic.Wire('|-').at(B.end).to(C.in2)
+
+#### Full Adder
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=0.5)
+    d += (X1 := logic.Xor())
+    d += (A := logic.Line().left(d.unit\*2).at(X1.in1).idot().label('A', 'left'))
+    d += (B := logic.Line().left().at(X1.in2).dot())
+    d += logic.Line().left().label('B', 'left')
+
+    d += logic.Line().right().at(X1.out).idot()
+    d += (X2 := logic.Xor().anchor('in1'))
+    d += (C := logic.Line().down(d.unit\*2).at(X2.in2))
+    d.push()
+    d += logic.Dot().at(C.center)
+    d += logic.Line().tox(A.end).label('C$\_{in}$', 'left')
+    d.pop()
+
+    d += (A1 := logic.And().right().anchor('in1'))
+    d += logic.Wire('-|').at(A1.in2).to(X1.out)
+    d.move\_from(A1.in2, dy\=-d.unit\*2)
+    d += (A2 := logic.And().right().anchor('in1'))
+    d += logic.Wire('-|').at(A2.in1).to(A.start)
+    d += logic.Wire('-|').at(A2.in2).to(B.end)
+    d.move\_from(A1.out, dy\=-(A1.out.y\-A2.out.y)/2)
+    d += (O1 := logic.Or().right().label('C$\_{out}$', 'right'))
+    d += logic.Line().at(A1.out).toy(O1.in1)
+    d += logic.Line().at(A2.out).toy(O1.in2)
+    d += logic.Line().at(X2.out).tox(O1.out).label('S', 'right')
+
+#### J-K Flip Flop
+
+Note the use of the LaTeX command **overline{Q}** in the label to draw a bar over the inverting output label.
+
+with schemdraw.Drawing() as d:
+    \# Two front gates (SR latch)
+    d += (G1 := logic.Nand(leadout\=.75).anchor('in1'))
+    d += logic.Line().length(d.unit/2).label('Q', 'right')
+    d.move\_from(G1.in1, dy\=-2.5)
+    d += (G2 := logic.Nand(leadout\=.75).anchor('in1'))
+    d += logic.Line().length(d.unit/2).label('$\\overline{Q}$', 'right')
+    d += logic.Wire('N', k\=.5).at(G2.in1).to(G1.out).dot()
+    d += logic.Wire('N', k\=.5).at(G1.in2).to(G2.out).dot()
+
+    \# Two back gates
+    d += logic.Line().left(d.unit/6).at(G1.in1)
+    d += (J := logic.Nand(inputs\=3).anchor('out').right())
+    d += logic.Wire('n', k\=.5).at(J.in1).to(G2.out, dx\=1).dot()
+    d += logic.Line().left(d.unit/4).at(J.in2).label('J', 'left')
+    d += logic.Line().left(d.unit/6).at(G2.in2)
+    d += (K := logic.Nand(inputs\=3).right().anchor('out'))
+    d += logic.Wire('n', k\=-.5).at(K.in3).to(G1.out, dx\=.5).dot()
+    d += logic.Line().left(d.unit/4).at(K.in2).label('K', 'left')
+    d += (C := logic.Line().at(J.in3).toy(K.in1))
+    d += logic.Dot().at(C.center)
+    d += logic.Line().left(d.unit/4).label('CLK', 'left')
+
+#### S-R Latch (Gates)
+
+with schemdraw.Drawing() as d:
+    d += (g1 := logic.Nor())
+    d.move\_from(g1.in1, dy\=-2.5)
+    d += (g2 := logic.Nor().anchor('in1'))
+    d += (g1out := logic.Line().right(.25).at(g1.out))
+    d += logic.Wire('N', k\=.5).at(g2.in1).to(g1out.end).dot()
+    d += (g2out := logic.Line().right(.25).at(g2.out))
+    d += logic.Wire('N', k\=.5).at(g1.in2).to(g2out.end).dot()
+    d += logic.Line().at(g1.in1).left(.5).label('R', 'left')
+    d += logic.Line().at(g2.in2).left(.5).label('S', 'left')
+    d += logic.Line().at(g1.out).right(.75).label('Q', 'right')
+    d += logic.Line().at(g2.out).right(.75).label('$\\overline{Q}$', 'right')
+
+### Timing Diagrams
+
+Timing diagrams, based on [WaveDrom](https://wavedrom.com/), are drawn using the [`schemdraw.logic.timing.TimingDiagram`](#schemdraw.logic.timing.TimingDiagram "schemdraw.logic.timing.TimingDiagram") class.
+
+from schemdraw import logic
+
+#### SRAM read/write cycle
+
+The SRAM examples make use of Schemdraw’s extended ‘edge’ notation for labeling timings just above and below the wave.
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'Address',     'wave': 'x4......x.', 'data': \['Valid address'\]},
+        {'name': 'Chip Select', 'wave': '1.0.....1.'},
+        {'name': 'Out Enable',  'wave': '1.0.....1.'},
+        {'name': 'Data Out',    'wave': 'z...x6...z', 'data': \['Valid data'\]},
+    \],
+     'edge': \['\[0^:1.2\]+\[0^:8\] $t\_{WC}$',
+              '\[0v:1\]+\[0v:5\] $t\_{AQ}$',
+              '\[1:2\]+\[1:5\] $t\_{EQ}$',
+              '\[2:2\]+\[2:5\] $t\_{GQ}$',
+              '\[0^:5\]-\[3v:5\]{lightgray,:}',
+             \]
+    }, ygap\=.5, grid\=False)
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'Address',      'wave': 'x4......x.', 'data': \['Valid address'\]},
+        {'name': 'Chip Select',  'wave': '1.0......1'},
+        {'name': 'Write Enable', 'wave': '1..0...1..'},
+        {'name': 'Data In',      'wave': 'x...5....x', 'data': \['Valid data'\]},
+    \],
+     'edge': \['\[0^:1\]+\[0^:8\] $t\_{WC}$',
+              '\[2:1\]+\[2:3\] $t\_{SA}$',
+              '\[3^:4\]+\[3^:7\] $t\_{WD}$',
+              '\[3^:7\]+\[3^:9\] $t\_{HD}$',
+              '\[0^:1\]-\[2:1\]{lightgray,:}'\],
+    }, ygap\=.4, grid\=False)
+
+#### J-K Flip Flop
+
+Timing diagram for a J-K flip flop taken from [here](https://commons.wikimedia.org/wiki/File:JK_timing_diagram.svg). Notice the use of the async dictionary parameter on the J and K signals, and the color parameters for the output signals.
+
+logic.TimingDiagram(
+    {'signal': \[
+        {'name': 'clk', 'wave': 'P......'},
+        {'name': 'J', 'wave': '0101', 'async': \[0, .8, 1.3, 3.7, 7\]},
+        {'name': 'K', 'wave': '010101', 'async': \[0, 1.2, 2.3, 2.8, 3.2, 3.7, 7\]},
+        {'name': 'Q', 'wave': '010.101', 'color': 'red', 'lw': 1.5},
+        {'name': '$\\overline{Q}$', 'wave': '101.010', 'color': 'blue', 'lw': 1.5}\],
+    'config': {'hscale': 1.5}}, risetime\=.05)
+
+#### Tutorial Examples
+
+These examples were copied from [WaveDrom Tutorial](https://wavedrom.com/tutorial.html). They use the from\_json class method so the examples can be pasted directly as a string. Otherwise, the setup must be converted to a proper Python dictionary.
+
+logic.TimingDiagram.from\_json('''{ signal: \[{ name: "Alfa", wave: "01.zx=ud.23.456789" }\] }''')
+
+logic.TimingDiagram.from\_json('''{ signal: \[
+  { name: "clk",         wave: "p.....|..." },
+  { name: "Data",        wave: "x.345x|=.x", data: \["head", "body", "tail", "data"\] },
+  { name: "Request",     wave: "0.1..0|1.0" },
+  {},
+  { name: "Acknowledge", wave: "1.....|01." }
+  \]}''')
+
+### Solid State
+
+#### S-R Latch (Transistors)
+
+with schemdraw.Drawing() as d:
+    d += (Q1 := elm.BjtNpn(circle\=True).reverse().label('Q1', 'left'))
+    d += (Q2 := elm.BjtNpn(circle\=True).at((d.unit\*2, 0)).label('Q2'))
+    d += elm.Line().up(d.unit/2).at(Q1.collector)
+
+    d += (R1 := elm.Resistor().up().label('R1').hold())
+    d += elm.Dot().label('V1', 'left')
+    d += elm.Resistor().right(d.unit\*.75).label('R3', 'bottom').dot()
+    d += elm.Line().up(d.unit/8).dot(open\=True).label('Set', 'right').hold()
+    d += elm.Line().to(Q2.base)
+
+    d += elm.Line().up(d.unit/2).at(Q2.collector)
+    d += elm.Dot().label('V2', 'right')
+    d += (R2 := elm.Resistor().up().label('R2', 'bottom').hold())
+    d += elm.Resistor().left(d.unit\*.75).label('R4', 'bottom').dot()
+    d += elm.Line().up(d.unit/8).dot(open\=True).label('Reset', 'right').hold()
+    d += elm.Line().to(Q1.base)
+
+    d += elm.Line().down(d.unit/4).at(Q1.emitter)
+    d += (BOT := elm.Line().tox(Q2.emitter))
+    d += elm.Line().to(Q2.emitter)
+    d += elm.Dot().at(BOT.center)
+    d += elm.Ground().at(BOT.center)
+
+    d += (TOP := elm.Line().endpoints(R1.end, R2.end))
+    d += elm.Dot().at(TOP.center)
+    d += elm.Vdd().at(TOP.center).label('+Vcc')
+
+#### 741 Opamp Internal Schematic
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12, unit\=2.5)
+    d += (Q1 := elm.BjtNpn().label('Q1').label('+IN', 'left'))
+    d += (Q3 := elm.BjtPnp().left().at(Q1.emitter).anchor('emitter').flip().label('Q3', 'left'))
+    d += elm.Line().down().at(Q3.collector).dot()
+    d.push()
+    d += elm.Line().right(d.unit/4)
+    d += (Q7 := elm.BjtNpn().anchor('base').label('Q7'))
+    d.pop()
+    d += elm.Line().down(d.unit\*1.25)
+    d += (Q5 := elm.BjtNpn().left().flip().anchor('collector').label('Q5', 'left'))
+    d += elm.Line().left(d.unit/2).at(Q5.emitter).label('OFST\\nNULL', 'left').flip()
+    d += elm.Resistor().down().at(Q5.emitter).label('R1\\n1K')
+    d += elm.Line().right(d.unit\*.75).dot()
+    d += (R3 := elm.Resistor().up().label('R3\\n50K'))
+    d += elm.Line().toy(Q5.base).dot()
+    d.push()
+    d += elm.Line().left().to(Q5.base)
+    d += elm.Line().at(Q7.emitter).toy(Q5.base).dot()
+    d.pop()
+    d += elm.Line().right(d.unit/4)
+    d += (Q6 := elm.BjtNpn().anchor('base').label('Q6'))
+    d += elm.Line().at(Q6.emitter).length(d.unit/3).label('\\nOFST\\nNULL', 'right').hold()
+    d += elm.Resistor().down().at(Q6.emitter).label('R2\\n1K').dot()
+
+    d += elm.Line().at(Q6.collector).toy(Q3.collector)
+    d += (Q4 := elm.BjtPnp().right().anchor('collector').label('Q4'))
+    d += elm.Line().at(Q4.base).tox(Q3.base)
+    d += elm.Line().at(Q4.emitter).toy(Q1.emitter)
+    d += (Q2 := elm.BjtNpn().left().flip().anchor('emitter').label('Q2', 'left').label('$-$IN', 'right'))
+    d += elm.Line().up(d.unit/3).at(Q2.collector).dot()
+    d += (Q8 := elm.BjtPnp().left().flip().anchor('base').label('Q8', 'left'))
+    d += elm.Line().at(Q8.collector).toy(Q2.collector).dot()
+    d += elm.Line().at(Q2.collector).tox(Q1.collector)
+    d += elm.Line().up(d.unit/4).at(Q8.emitter)
+    d += (top := elm.Line().tox(Q7.collector))
+    d += elm.Line().toy(Q7.collector)
+
+    d += elm.Line().right(d.unit\*2).at(top.start)
+    d += elm.Line().down(d.unit/4)
+    d += (Q9 := elm.BjtPnp().right().anchor('emitter').label('Q9', ofst\=-.1))
+    d += elm.Line().at(Q9.base).tox(Q8.base)
+    d += elm.Dot().at(Q4.base)
+    d += elm.Line().down(d.unit/2).at(Q4.base)
+    d += elm.Line().tox(Q9.collector).dot()
+    d += elm.Line().at(Q9.collector).toy(Q6.collector)
+    d += (Q10 := elm.BjtNpn().left().flip().anchor('collector').label('Q10', 'left'))
+    d += elm.Resistor().at(Q10.emitter).toy(R3.start).label('R4\\n5K').dot()
+
+    d += (Q11 := elm.BjtNpn().right().at(Q10.base).anchor('base').label('Q11'))
+    d += elm.Dot().at(Q11.base)
+    d += elm.Line().up(d.unit/2)
+    d += elm.Line().tox(Q11.collector).dot()
+    d += elm.Line().at(Q11.emitter).toy(R3.start).dot()
+    d += elm.Line().up(d.unit\*2).at(Q11.collector)
+    d += elm.Resistor().toy(Q9.collector).label('R5\\n39K')
+    d += (Q12 := elm.BjtPnp().left().flip().anchor('collector').label('Q12', 'left', ofst\=-.1))
+    d += elm.Line().up(d.unit/4).at(Q12.emitter).dot()
+    d += elm.Line().tox(Q9.emitter).dot()
+    d += elm.Line().right(d.unit/4).at(Q12.base).dot()
+    d += elm.Wire('|-').to(Q12.collector).dot().hold()
+    d += elm.Line().right(d.unit\*1.5)
+    d += (Q13 := elm.BjtPnp().anchor('base').label('Q13'))
+    d += elm.Line().up(d.unit/4).dot()
+    d += elm.Line().tox(Q12.emitter)
+    d += (K := elm.Line().down(d.unit/5).at(Q13.collector).dot())
+    d += elm.Line().down()
+    d += (Q16 := elm.BjtNpn().right().anchor('collector').label('Q16', ofst\=-.1))
+    d += elm.Line().left(d.unit/3).at(Q16.base).dot()
+    d += (R7 := elm.Resistor().up().toy(K.end).label('R7\\n4.5K').dot())
+    d += elm.Line().tox(Q13.collector).hold()
+    d += (R8 := elm.Resistor().down().at(R7.start).label('R8\\n7.5K').dot())
+    d += elm.Line().tox(Q16.emitter)
+    d += (J := elm.Dot())
+    d += elm.Line().toy(Q16.emitter)
+    d += (Q15 := elm.BjtNpn().right().at(R8.end).anchor('collector').label('Q15'))
+    d += elm.Line().left(d.unit/2).at(Q15.base).dot()
+    d += (C1 := elm.Capacitor().toy(R7.end).label('C1\\n30pF'))
+    d += elm.Line().tox(Q13.collector)
+    d += elm.Line().at(C1.start).tox(Q6.collector).dot()
+    d += elm.Line().down(d.unit/2).at(J.center)
+    d += (Q19 := elm.BjtNpn().right().anchor('collector').label('Q19'))
+    d += elm.Line().at(Q19.base).tox(Q15.emitter).dot()
+    d += elm.Line().toy(Q15.emitter).hold()
+    d += elm.Line().down(d.unit/4).at(Q19.emitter).dot()
+    d += elm.Line().left()
+    d += (Q22 := elm.BjtNpn().left().anchor('base').flip().label('Q22', 'left'))
+    d += elm.Line().at(Q22.collector).toy(Q15.base).dot()
+    d += elm.Line().at(Q22.emitter).toy(R3.start).dot()
+    d += elm.Line().tox(R3.start).hold()
+    d += elm.Line().tox(Q15.emitter).dot()
+    d.push()
+    d += elm.Resistor().up().label('R12\\n50K')
+    d += elm.Line().toy(Q19.base)
+    d.pop()
+    d += elm.Line().tox(Q19.emitter).dot()
+    d += (R11 := elm.Resistor().up().label('R11\\n50'))
+    d += elm.Line().toy(Q19.emitter)
+
+    d += elm.Line().up(d.unit/4).at(Q13.emitter)
+    d += elm.Line().right(d.unit\*1.5).dot()
+    d += elm.Line().length(d.unit/4).label('V+', 'right').hold()
+    d += elm.Line().down(d.unit\*.75)
+    d += (Q14 := elm.BjtNpn().right().anchor('collector').label('Q14'))
+    d += elm.Line().left(d.unit/2).at(Q14.base)
+    d.push()
+    d += elm.Line().down(d.unit/2).idot()
+    d += (Q17 := elm.BjtNpn().left().anchor('collector').flip().label('Q17', 'left', ofst\=-.1))
+    d += elm.Line().at(Q17.base).tox(Q14.emitter).dot()
+    d += (J := elm.Line().toy(Q14.emitter))
+    d.pop()
+    d += elm.Line().tox(Q13.collector).dot()
+    d += elm.Resistor().down().at(J.start).label('R9\\n25').dot()
+    d += elm.Wire('-|').to(Q17.emitter).hold()
+    d += elm.Line().down(d.unit/4).dot()
+    d += elm.Line().right(d.unit/4).label('OUT', 'right').hold()
+    d += elm.Resistor().down().label('R10\\n50')
+    d += (Q20 := elm.BjtPnp().right().anchor('emitter').label('Q20'))
+    d += elm.Wire('c', k\=-1).at(Q20.base).to(Q15.collector)
+    d += elm.Line().at(Q20.collector).toy(R3.start).dot()
+    d += elm.Line().right(d.unit/4).label('V-', 'right').hold()
+    d += elm.Line().tox(R11.start)
+
+### Integrated Circuits
+
+#### 555 LED Blinker Circuit
+
+Using the [`schemdraw.elements.intcircuits.Ic`](#schemdraw.elements.intcircuits.Ic "schemdraw.elements.intcircuits.Ic") class to define a custom integrated circuit.
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    IC555def \= elm.Ic(pins\=\[elm.IcPin(name\='TRG', side\='left', pin\='2'),
+                            elm.IcPin(name\='THR', side\='left', pin\='6'),
+                            elm.IcPin(name\='DIS', side\='left', pin\='7'),
+                            elm.IcPin(name\='CTL', side\='right', pin\='5'),
+                            elm.IcPin(name\='OUT', side\='right', pin\='3'),
+                            elm.IcPin(name\='RST', side\='top', pin\='4'),
+                            elm.IcPin(name\='Vcc', side\='top', pin\='8'),
+                            elm.IcPin(name\='GND', side\='bot', pin\='1'),\],
+                       edgepadW\=.5,
+                       edgepadH\=1,
+                       pinspacing\=1.5,
+                       leadlen\=1,
+                       label\='555')
+    d += (T := IC555def)
+    d += (BOT := elm.Ground().at(T.GND))
+    d += elm.Dot()
+    d += elm.Resistor().endpoints(T.DIS, T.THR).label('Rb').idot()
+    d += elm.Resistor().up().at(T.DIS).label('Ra').label('+Vcc', 'right')
+    d += elm.Line().endpoints(T.THR, T.TRG)
+    d += elm.Capacitor().at(T.TRG).toy(BOT.start).label('C')
+    d += elm.Line().tox(BOT.start)
+    d += elm.Capacitor().at(T.CTL).toy(BOT.start).label('.01$\\mu$F', 'bottom').dot()
+    d += elm.Dot().at(T.DIS)
+    d += elm.Dot().at(T.THR)
+    d += elm.Dot().at(T.TRG)
+    d += elm.Line().endpoints(T.RST,T.Vcc).dot()
+    d += elm.Line().up(d.unit/4).label('+Vcc', 'right')
+    d += elm.Resistor().right().at(T.OUT).label('330')
+    d += elm.LED().flip().toy(BOT.start)
+    d += elm.Line().tox(BOT.start)
+
+#### Seven-Segment Display Counter
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    d += (IC555 := elm.Ic555())
+    d += (gnd := elm.Ground(xy\=IC555.GND))
+    d += elm.Dot()
+    d += elm.Resistor().endpoints(IC555.DIS, IC555.THR).label('100 kΩ')
+    d += elm.Resistor().up().at(IC555.DIS).label('1 kΩ').label('+Vcc', 'right')
+    d += elm.Line().endpoints(IC555.THR, IC555.TRG)
+    d += elm.Capacitor(polar\=True).at(IC555.TRG).toy(gnd.start).label('10 μF')
+    d += elm.Line().tox(gnd.start)
+    d += elm.Capacitor().at(IC555.CTL).toy(gnd.start).label('.01 μF', 'bottom')
+    d += elm.Line().tox(gnd.start)
+
+    d += elm.Dot().at(IC555.DIS)
+    d += elm.Dot().at(IC555.THR)
+    d += elm.Dot().at(IC555.TRG)
+    d += elm.Line().endpoints(IC555.RST,IC555.Vcc).dot()
+    d += elm.Line().up(d.unit/4).label('+Vcc', 'right')
+
+    IC4026 \= elm.Ic(pins\=\[elm.IcPin('CLK', pin\='1', side\='left'),
+                          elm.IcPin('INH', pin\='2', side\='left'), \# Inhibit
+                          elm.IcPin('RST', pin\='15', side\='left'),
+                          elm.IcPin('DEI', pin\='3', side\='left'), \# Display Enable In
+                          elm.IcPin('Vss', pin\='8', side\='bot'),
+                          elm.IcPin('Vdd', pin\='16', side\='top'),
+                          elm.IcPin('UCS', pin\='14', side\='bot'), \# Ungated C Segment
+                          elm.IcPin('DEO', pin\='4', side\='bot'),  \# Display Enable Out
+                          elm.IcPin('Co', pin\='4', side\='bot'),   \# Carry out
+                          elm.IcPin('g', pin\='7', side\='right'),
+                          elm.IcPin('f', pin\='6', side\='right'),
+                          elm.IcPin('e', pin\='11', side\='right'),
+                          elm.IcPin('d', pin\='9', side\='right'),
+                          elm.IcPin('c', pin\='13', side\='right'),
+                          elm.IcPin('b', pin\='12', side\='right'),
+                          elm.IcPin('a', pin\='10', side\='right'),
+                         \],
+                   w\=4, leadlen\=.8).label('4026').right()
+
+    d.move\_from(IC555.OUT, dx\=5, dy\=-1)
+    d += IC4026.anchor('center')
+    d += elm.Wire('c').at(IC555.OUT).to(IC4026.CLK)
+    d += elm.Line().endpoints(IC4026.INH, IC4026.RST).dot()
+    d += elm.Line().left(d.unit/4)
+    d += elm.Ground()
+    d += elm.Wire('|-').at(IC4026.DEI).to(IC4026.Vdd).dot()
+    d += elm.Line().up(d.unit/4).label('+Vcc', 'right')
+    d += elm.Line().at(IC4026.Vss).tox(IC4026.UCS).dot()
+    d += elm.Ground()
+    d += elm.Line().tox(IC4026.DEO).dot()
+    d += elm.Line().tox(IC4026.Co)
+
+    d += elm.Resistor().right().at(IC4026.a)
+    d += (disp := elm.SevenSegment(cathode\=True).anchor('a'))
+    d += elm.Resistor().at(IC4026.b)
+    d += elm.Resistor().at(IC4026.c)
+    d += elm.Resistor().at(IC4026.d)
+    d += elm.Resistor().at(IC4026.e)
+    d += elm.Resistor().at(IC4026.f)
+    d += elm.Resistor().at(IC4026.g).label('7 x 330', loc\='bottom')
+    d += elm.Ground(lead\=False).at(disp.cathode)
+
+#### Arduino Board
+
+The Arduino board uses [`schemdraw.elements.connectors.OrthoLines`](#schemdraw.elements.connectors.OrthoLines "schemdraw.elements.connectors.OrthoLines") to easily add all connections between data bus and headers.
+
+class Atmega328(elm.Ic):
+    def \_\_init\_\_(self, \*args, \*\*kwargs):
+        pins\=\[elm.IcPin(name\='PD0', pin\='2', side\='r', slot\='1/22'),
+              elm.IcPin(name\='PD1', pin\='3', side\='r', slot\='2/22'),
+              elm.IcPin(name\='PD2', pin\='4', side\='r', slot\='3/22'),
+              elm.IcPin(name\='PD3', pin\='5', side\='r', slot\='4/22'),
+              elm.IcPin(name\='PD4', pin\='6', side\='r', slot\='5/22'),
+              elm.IcPin(name\='PD5', pin\='11', side\='r', slot\='6/22'),
+              elm.IcPin(name\='PD6', pin\='12', side\='r', slot\='7/22'),
+              elm.IcPin(name\='PD7', pin\='13', side\='r', slot\='8/22'),
+              elm.IcPin(name\='PC0', pin\='23', side\='r', slot\='10/22'),
+              elm.IcPin(name\='PC1', pin\='24', side\='r', slot\='11/22'),
+              elm.IcPin(name\='PC2', pin\='25', side\='r', slot\='12/22'),
+              elm.IcPin(name\='PC3', pin\='26', side\='r', slot\='13/22'),
+              elm.IcPin(name\='PC4', pin\='27', side\='r', slot\='14/22'),
+              elm.IcPin(name\='PC5', pin\='28', side\='r', slot\='15/22'),
+              elm.IcPin(name\='PB0', pin\='14', side\='r', slot\='17/22'),
+              elm.IcPin(name\='PB1', pin\='15', side\='r', slot\='18/22'),
+              elm.IcPin(name\='PB2', pin\='16', side\='r', slot\='19/22'),
+              elm.IcPin(name\='PB3', pin\='17', side\='r', slot\='20/22'),
+              elm.IcPin(name\='PB4', pin\='18', side\='r', slot\='21/22'),
+              elm.IcPin(name\='PB5', pin\='19', side\='r', slot\='22/22'),
+
+              elm.IcPin(name\='RESET', side\='l', slot\='22/22', invert\=True, pin\='1'),
+              elm.IcPin(name\='XTAL2', side\='l', slot\='19/22', pin\='10'),
+              elm.IcPin(name\='XTAL1', side\='l', slot\='17/22', pin\='9'),
+              elm.IcPin(name\='AREF', side\='l', slot\='15/22', pin\='21'),
+              elm.IcPin(name\='AVCC', side\='l', slot\='14/22', pin\='20'),
+              elm.IcPin(name\='AGND', side\='l', slot\='13/22', pin\='22'),
+              elm.IcPin(name\='VCC', side\='l', slot\='11/22', pin\='7'),
+              elm.IcPin(name\='GND', side\='l', slot\='10/22', pin\='8')\]
+        super().\_\_init\_\_(pins\=pins, w\=5, plblofst\=.05, botlabel\='ATMEGA328', \*\*kwargs)
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=11, inches\_per\_unit\=.4)
+    d += (Q1 := Atmega328())
+    d += (JP4 := elm.Header(rows\=10, shownumber\=True, pinsright\=\['D8', 'D9', 'D10', 'D11', 'D12', 'D13', '', '', '', ''\], pinalignright\='center')
+                            .flip().at(Q1.PB5, dx\=4, dy\=1).anchor('pin6').label('JP4', fontsize\=10))
+
+    d += (JP3 := elm.Header(rows\=6, shownumber\=True, pinsright\=\['A0', 'A1', 'A2', 'A3', 'A4', 'A5'\], pinalignright\='center')
+                        .flip().at(Q1.PC5, dx\=4).anchor('pin6').label('JP3', fontsize\=10))
+
+    d += (JP2 := elm.Header(rows\=8, shownumber\=True, pinsright\=\['D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'\],
+                            pinalignright\='center')).at(Q1.PD7, dx\=3).flip().anchor('pin8').label('JP2', fontsize\=10)
+
+    d += elm.OrthoLines(n\=6).at(Q1.PB5).to(JP4.pin6)
+    d += elm.OrthoLines(n\=6).at(Q1.PC5).to(JP3.pin6)
+    d += elm.OrthoLines(n\=8).at(Q1.PD7).to(JP2.pin8)
+
+    d += elm.Line().left(.9).at(JP4.pin7).label('GND', 'left')
+    d += elm.Line().left(.9).at(JP4.pin8).label('AREF', 'left')
+    d += elm.Line().left(.9).at(JP4.pin9).label('AD4/SDA', 'left')
+    d += elm.Line().left(.9).at(JP4.pin10).label('AD5/SCL', 'left')
+
+    d += (JP1 := elm.Header(rows\=6, shownumber\=True, pinsright\=\['VCC', 'RXD', 'TXD', 'DTR', 'RTS', 'GND'\],
+                            pinalignright\='center').right().at(Q1.PD0, dx\=4, dy\=-2).anchor('pin1'))
+    d += elm.Line().left(d.unit/2).at(JP1.pin1)
+    d += elm.Vdd().label('+5V')
+    d += elm.Line().left().at(JP1.pin2)
+    d += elm.Line().toy(Q1.PD0).dot()
+    d += elm.Line().left(d.unit+.6).at(JP1.pin3)
+    d += elm.Line().toy(Q1.PD1).dot()
+    d += elm.Line().left(d.unit/2).at(JP1.pin6)
+    d += elm.Ground()
+
+    d += elm.Line().left(d.unit\*2).at(Q1.XTAL2).dot()
+    d.push()
+    d += elm.Capacitor().left(d.unit/2).scale(.75)
+    d += elm.Line().toy(Q1.XTAL1).dot()
+    d += elm.Ground()
+    d += elm.Capacitor().right(d.unit/2).scale(.75).dot()
+    d.pop()
+    d += elm.Crystal().toy(Q1.XTAL1).label('16MHz', 'bottom')
+    d += elm.Line().tox(Q1.XTAL1)
+
+    d += elm.Line().left(d.unit/3).at(Q1.AREF).label('AREF', 'left')
+    d += elm.Line().left(1.5\*d.unit).at(Q1.AVCC)
+    d += elm.Vdd().label('+5V')
+    d += elm.Line().toy(Q1.VCC).dot().idot()
+    d += elm.Line().tox(Q1.VCC).hold()
+    d += elm.Capacitor().down().label('100n')
+    d += (GND := elm.Ground())
+
+    d += elm.Line().left().at(Q1.AGND)
+    d += elm.Line().toy(Q1.GND).dot()
+    d += elm.Line().tox(Q1.GND).hold()
+    d += elm.Wire('|-').to(GND.center).dot()
+
+    d += elm.Line().left().at(Q1.RESET).dot()
+    d.push()
+    d += elm.RBox().up().label('10K')
+    d += elm.Vdd().label('+5V')
+    d.pop()
+    d += elm.Line().left().dot()
+    d.push()
+    d += (RST := elm.Button().up().label('Reset'))
+    d += elm.Line().left(d.unit/2)
+    d += elm.Ground()
+    d.pop()
+
+    d += elm.Capacitor().left().at(JP1.pin4).label('100n', 'bottom')
+    d += elm.Wire('c', k\=-16).to(RST.start)
+
+#### 741 Opamp, DIP Layout
+
+with schemdraw.Drawing() as d:
+    d += (Q := elm.IcDIP(pins\=8)
+                 .label('Offset Null', loc\='p1', fontsize\=10)
+                 .label('Inverting Input', loc\='p2', fontsize\=10)
+                 .label('Non-inverting Input', loc\='p3', fontsize\=10)
+                 .label('V-', loc\='p4', fontsize\=10)
+                 .label('Offset Null', loc\='p5', fontsize\=10)
+                 .label('Output', loc\='p6', fontsize\=10)
+                 .label('V+', loc\='p7', fontsize\=10)
+                 .label('NC', loc\='p8', fontsize\=10))
+    d += elm.Line().at(Q.p2\_in).length(d.unit/5)
+    d += (op := elm.Opamp().anchor('in1').scale(.8))
+    d += elm.Line().at(Q.p3\_in).length(d.unit/5)
+    d += elm.Wire('c', k\=.3).at(op.out).to(Q.p6\_in)
+    d += elm.Wire('-|').at(Q.p4\_in).to(op.n1)
+    d += elm.Wire('-|').at(Q.p7\_in).to(op.n2)
+
+### Signal Processing
+
+Signal processing elements are in the [`schemdraw.dsp.dsp`](#module-schemdraw.dsp.dsp "schemdraw.dsp.dsp") module.
+
+from schemdraw import dsp
+
+#### Various Networks
+
+with schemdraw.Drawing() as d:
+    d += dsp.Line().length(d.unit/3).label('in')
+    d += (inpt := dsp.Dot())
+    d += dsp.Arrow().length(d.unit/3)
+    d += (delay := dsp.Box(w\=2, h\=2).anchor('W').label('Delay\\nT'))
+    d += dsp.Arrow().right(d.unit/2).at(delay.E)
+    d += (sm := dsp.SumSigma())
+    d += dsp.Arrow().at(sm.E).length(d.unit/2)
+    d += (intg := dsp.Box(w\=2, h\=2).anchor('W').label('$\\int$'))
+    d += dsp.Arrow().right(d.unit/2).at(intg.E).label('out', loc\='right')
+    d += dsp.Line().down(d.unit/2).at(inpt.center)
+    d += dsp.Line().tox(sm.S)
+    d += dsp.Arrow().toy(sm.S).label('+', loc\='bot')
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=14)
+    d += dsp.Line().length(d.unit/2).label('F(s)').dot()
+    d.push()
+    d += dsp.Line().up(d.unit/2)
+    d += dsp.Arrow().right(d.unit/2)
+    d += (h1 := dsp.Box(w\=2, h\=2).anchor('W').label('$H\_1(s)$'))
+    d.pop()
+    d += dsp.Line().down(d.unit/2)
+    d += dsp.Arrow().right(d.unit/2)
+    d += (h2 := dsp.Box(w\=2, h\=2).anchor('W').label('$H\_2(s)$'))
+    d += (sm := dsp.SumSigma().right().at((h1.E\[0\] + d.unit/2, 0)).anchor('center'))
+    d += dsp.Line().at(h1.E).tox(sm.N)
+    d += dsp.Arrow().toy(sm.N)
+    d += dsp.Line().at(h2.E).tox(sm.S)
+    d += dsp.Arrow().toy(sm.S)
+    d += dsp.Arrow().right(d.unit/3).at(sm.E).label('Y(s)', 'right')
+
+#### Superheterodyne Receiver
+
+[Source](https://www.electronicdesign.com/adc/high-speed-rf-sampling-adc-boosts-bandwidth-dynamic-range).
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    d += dsp.Antenna()
+    d += dsp.Line().right(d.unit/4)
+    d += dsp.Filter(response\='bp').fill('thistle').anchor('W').label('RF filter\\n#1', 'bottom', ofst\=.2)
+    d += dsp.Line().length(d.unit/4)
+    d += dsp.Amp().fill('lightblue').label('LNA')
+    d += dsp.Line().length(d.unit/4)
+    d += dsp.Filter(response\='bp').anchor('W').fill('thistle').label('RF filter\\n#2', 'bottom', ofst\=.2)
+    d += dsp.Line().length(d.unit/3)
+    d += (mix := dsp.Mixer().fill('navajowhite').label('Mixer'))
+    d += dsp.Line().at(mix.S).down(d.unit/3)
+    d += dsp.Oscillator().right().anchor('N').fill('navajowhite').label('Local\\nOscillator', 'right', ofst\=.2)
+    d += dsp.Line().at(mix.E).right(d.unit/3)
+    d += dsp.Filter(response\='bp').anchor('W').fill('thistle').label('IF filter', 'bottom', ofst\=.2)
+    d += dsp.Line().right(d.unit/4)
+    d += dsp.Amp().fill('lightblue').label('IF\\namplifier')
+    d += dsp.Line().length(d.unit/4)
+    d += dsp.Demod().anchor('W').fill('navajowhite').label('Demodulator', 'bottom', ofst\=.2)
+    d += dsp.Arrow().right(d.unit/3)
+
+#### Direct Conversion Receiver
+
+with schemdraw.Drawing() as d:
+    d += dsp.Antenna()
+    d += dsp.Arrow().right(d.unit/2).label('$f\_{RF}$', 'bot')
+    d += dsp.Amp().label('LNA')
+    d += dsp.Line().right(d.unit/5).dot()
+    d.push()
+    d += dsp.Line().length(d.unit/4)
+    d += (mix1 := dsp.Mixer().label('Mixer', ofst\=0))
+    d += dsp.Arrow().length(d.unit/2)
+    d += (lpf1 := dsp.Filter(response\='lp').label('LPF', 'bot', ofst\=.2))
+    d += dsp.Line().length(d.unit/6)
+    d += (adc1 := dsp.Adc().label('ADC'))
+    d += dsp.Arrow().length(d.unit/3)
+    d += (dsp1 := dsp.Ic(pins\=\[dsp.IcPin(side\='L'), dsp.IcPin(side\='L'), dsp.IcPin(side\='R')\],
+                        size\=(2.75, 5), leadlen\=0).anchor('inL2').label('DSP'))
+    d += dsp.Arrow().at(dsp1.inR1).length(d.unit/3)
+    d.pop()
+
+    d += dsp.Line().toy(dsp1.inL1)
+    d += dsp.Arrow().tox(mix1.W)
+    d += (mix2 := dsp.Mixer().label('Mixer', ofst\=0))
+    d += dsp.Arrow().tox(lpf1.W)
+    d += dsp.Filter(response\='lp').label('LPF', 'bot', ofst\=.2)
+    d += dsp.Line().tox(adc1.W)
+    d += dsp.Adc().label('ADC')
+    d += dsp.Arrow().to(dsp1.inL1)
+
+    d += dsp.Arrow().down(d.unit/6).reverse().at(mix1.S)
+    d += dsp.Line().left(d.unit\*1.25)
+    d += dsp.Line().down(d.unit\*.75)
+    d += (flo := dsp.Dot().label('$f\_{LO}$', 'left'))
+    d.push()
+    d += dsp.Line().down(d.unit/5)
+    d += dsp.Oscillator().right().anchor('N').label('LO', 'left', ofst\=.15)
+    d.pop()
+    d += dsp.Arrow().down(d.unit/4).reverse().at(mix2.S)
+    d += (b1 := dsp.Square().right().label('90°').anchor('N'))
+    d += dsp.Arrow().left(d.unit/4).reverse().at(b1.W)
+    d += dsp.Line().toy(flo.center)
+    d += dsp.Line().tox(flo.center)
+
+#### Digital Filter
+
+with schemdraw.Drawing() as d:
+    d.config(unit\=1, fontsize\=14)
+    d += dsp.Line().length(d.unit\*2).label('x\[n\]', 'left').dot()
+
+    d.push()
+    d += dsp.Line().right()
+    d += dsp.Amp().label('$b\_0$', 'bottom')
+    d += dsp.Arrow()
+    d += (s0 := dsp.Sum().anchor('W'))
+    d.pop()
+
+    d += dsp.Arrow().down()
+    d += (z1 := dsp.Square(label\='$z^{-1}$'))
+    d += dsp.Line().length(d.unit/2).dot()
+
+    d.push()
+    d += dsp.Line().right()
+    d += dsp.Amp().label('$b\_1$', 'bottom')
+    d += dsp.Arrow()
+    d += (s1 := dsp.Sum().anchor('W'))
+    d.pop()
+
+    d += dsp.Arrow().down(d.unit\*.75)
+    d += dsp.Square().label('$z^{-1}$')
+    d += dsp.Line().length(d.unit\*.75)
+    d += dsp.Line().right()
+    d += dsp.Amp().label('$b\_2$', 'bottom')
+    d += dsp.Arrow()
+    d += (s2 := dsp.Sum().anchor('W'))
+
+    d += dsp.Arrow().at(s2.N).toy(s1.S)
+    d += dsp.Arrow().at(s1.N).toy(s0.S)
+
+    d += dsp.Line().right(d.unit\*2.75).at(s0.E).dot()
+    d += dsp.Arrow().right().label('y\[n\]', 'right').hold()
+    d += dsp.Arrow().down()
+    d += dsp.Square().label('$z^{-1}$')
+    d += dsp.Line().length(d.unit/2).dot()
+    d.push()
+    d += dsp.Line().left()
+    d += (a1 := dsp.Amp().label('$-a\_1$', 'bottom'))
+    d += dsp.Arrow().at(a1.out).tox(s1.E)
+    d.pop()
+
+    d += dsp.Arrow().down(d.unit\*.75)
+    d += dsp.Square().label('$z^{-1}$')
+    d += dsp.Line().length(d.unit\*.75)
+    d += dsp.Line().left()
+    d += (a2 := dsp.Amp().label('$-a\_2$', 'bottom'))
+    d += dsp.Arrow().at(a2.out).tox(s2.E)
+
+### Flowcharting
+
+Flowchart elements are defined in the `flow` module.
+
+from schemdraw import flow
+
+#### It’s a Trap!
+
+Recreation of [XKCD 1195](https://xkcd.com/1195/).
+
+with schemdraw.Drawing() as d:
+    d += flow.Start().label('START')
+    d += flow.Arrow().down(d.unit/3)
+    d += (h := flow.Decision(w\=5.5, h\=4, S\='YES').label('Hey, wait,\\nthis flowchart\\nis a trap!'))
+    d += flow.Line().down(d.unit/4)
+    d += flow.Wire('c', k\=3.5, arrow\='->').to(h.E)
+
+#### Flowchart for flowcharts
+
+Recreation of [XKCD 518](https://xkcd.com/518/).
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=11)
+    d += (b := flow.Start().label('START'))
+    d += flow.Arrow().down(d.unit/2)
+    d += (d1 := flow.Decision(w\=5, h\=3.9, E\='YES', S\='NO').label('DO YOU\\nUNDERSTAND\\nFLOW CHARTS?'))
+    d += flow.Arrow().length(d.unit/2)
+    d += (d2 := flow.Decision(w\=5, h\=3.9, E\='YES', S\='NO').label('OKAY,\\nYOU SEE THE\\nLINE LABELED\\n"YES"?'))
+    d += flow.Arrow().length(d.unit/2)
+    d += (d3 := flow.Decision(w\=5.2, h\=3.9, E\='YES', S\='NO').label('BUT YOU\\nSEE THE ONES\\nLABELED "NO".'))
+
+    d += flow.Arrow().right(d.unit/2).at(d3.E)
+    d += flow.Box(w\=2, h\=1.25).anchor('W').label('WAIT,\\nWHAT?')
+    d += flow.Arrow().down(d.unit/2).at(d3.S)
+    d += (listen := flow.Box(w\=2, h\=1).label('LISTEN.'))
+    d += flow.Arrow().right(d.unit/2).at(listen.E)
+    d += (hate := flow.Box(w\=2, h\=1.25).anchor('W').label('I HATE\\nYOU.'))
+
+    d += flow.Arrow().right(d.unit\*3.5).at(d1.E)
+    d += (good := flow.Box(w\=2, h\=1).anchor('W').label('GOOD'))
+    d += flow.Arrow().right(d.unit\*1.5).at(d2.E)
+    d += (d4 := flow.Decision(w\=5.3, h\=4.0, E\='YES', S\='NO').anchor('W').label('...AND YOU CAN\\nSEE THE ONES\\nLABELED "NO"?'))
+
+    d += flow.Wire('-|', arrow\='->').at(d4.E).to(good.S)
+    d += flow.Arrow().down(d.unit/2).at(d4.S)
+    d += (d5 := flow.Decision(w\=5, h\=3.6, E\='YES', S\='NO').label('BUT YOU\\nJUST FOLLOWED\\nTHEM TWICE!'))
+    d += flow.Arrow().right().at(d5.E)
+    d += (question := flow.Box(w\=3.5, h\=1.75).anchor('W').label("(THAT WASN'T\\nA QUESTION.)"))
+    d += flow.Wire('n', k\=-1, arrow\='->').at(d5.S).to(question.S)
+
+    d += flow.Line().at(good.E).tox(question.S)
+    d += flow.Arrow().down()
+    d += (drink := flow.Box(w\=2.5, h\=1.5).label("LET'S GO\\nDRINK."))
+    d += flow.Arrow().right().at(drink.E).label('6 DRINKS')
+    d += flow.Box(w\=3.7, h\=2).anchor('W').label('HEY, I SHOULD\\nTRY INSTALLING\\nFREEBSD!')
+    d += flow.Arrow().up(d.unit\*.75).at(question.N)
+    d += (screw := flow.Box(w\=2.5, h\=1).anchor('S').label('SCREW IT.'))
+    d += flow.Arrow().at(screw.N).toy(drink.S)
+
+#### State Machine Acceptor
+
+[Source](https://en.wikipedia.org/wiki/Finite-state_machine#/media/File:DFAexample.svg)
+
+with schemdraw.Drawing() as d:
+    d += elm.Arrow().length(1)
+    d += (s1 := flow.StateEnd().anchor('W').label('$S\_1$'))
+    d += elm.Arc2(arrow\='<-').at(s1.NE).label('0')
+    d += (s2 := flow.State().anchor('NW').label('$S\_2$'))
+    d += elm.Arc2(arrow\='<-').at(s2.SW).to(s1.SE).label('0')
+    d += elm.ArcLoop(arrow\='<-').at(s2.NE).to(s2.E).label('1')
+    d += elm.ArcLoop(arrow\='<-').at(s1.NW).to(s1.N).label('1')
+
+#### Door Controller
+
+[Diagram Source](https://en.wikipedia.org/wiki/Finite-state_machine#/media/File:Fsm_Moore_model_door_control.svg)
+
+with schemdraw.Drawing() as d:
+    d.config(fontsize\=12)
+    delta \= 4
+    d += (c4 := flow.Circle(r\=1).label('4\\nopening'))
+    d += (c1 := flow.Circle(r\=1).at((delta, delta)).label('1\\nopened'))
+    d += (c2 := flow.Circle(r\=1).at((2\*delta, 0)).label('2\\nclosing'))
+    d += (c3 := flow.Circle(r\=1).at((delta, \-delta)).label('3\\nclosed'))
+    d += elm.Arc2(arrow\='->', k\=.3).at(c4.NNE).to(c1.WSW).label('sensor\\nopened')
+    d += elm.Arc2(arrow\='->', k\=.3).at(c1.ESE).to(c2.NNW).label('close')
+    d += elm.Arc2(arrow\='->', k\=.3).at(c2.SSW).to(c3.ENE).label('sensor\\nclosed')
+    d += elm.Arc2(arrow\='->', k\=.3).at(c3.WNW).to(c4.SSE).label('open')
+    d += elm.Arc2(arrow\='<-', k\=.3).at(c4.ENE).to(c2.WNW).label('open')
+    d += elm.Arc2(arrow\='<-', k\=.3).at(c2.WSW).to(c4.ESE).label('close')
+
+#### Another State Machine
+
+with schemdraw.Drawing() as dwg:
+    dwg += (a := flow.Circle().label('a').fill('lightblue'))
+    dwg += (b := flow.Circle().at((4, 0)).label('b').fill('lightblue'))
+    dwg += (c := flow.Circle().at((8, 0)).label('c').fill('lightblue'))
+    dwg += (f := flow.Circle().at((0, \-4)).label('f').fill('lightblue'))
+    dwg += (e := flow.Circle().at((4, \-6)).label('e').fill('lightblue'))
+    dwg += (d := flow.Circle().at((8, \-4)).label('d').fill('lightblue'))
+    dwg += elm.ArcLoop(arrow\='->').at(a.NW).to(a.NNE).label('00/0', fontsize\=10)
+    dwg += elm.ArcLoop(arrow\='->').at(b.NNW).to(b.NE).label('01/0', fontsize\=10)
+    dwg += elm.ArcLoop(arrow\='->').at(c.NNW).to(c.NE).label('11/0', fontsize\=10)
+    dwg += elm.ArcLoop(arrow\='->').at(d.E).to(d.SE).label('10/0', fontsize\=10)
+    dwg += elm.ArcLoop(arrow\='->').at(e.SSE).to(e.SW).label('11/1', fontsize\=10)
+    dwg += elm.ArcLoop(arrow\='->').at(f.S).to(f.SW).label('01/1', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(a.ENE).to(b.WNW).label('01/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(b.W).to(a.E).label('00/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(b.ENE).to(c.WNW).label('11/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(c.W).to(b.E).label('01/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(a.ESE).to(d.NW).label('00/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(d.WNW).to(a.SE).label('10/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(f.ENE).to(e.NW).label('01/1', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(e.WNW).to(f.ESE).label('11/1', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='->').at(e.NE).to(d.WSW).label('11/1', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='->').at(d.SSW).to(e.ENE).label('10/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(f.NNW).to(a.SSW).label('00/0', fontsize\=10)
+    dwg += elm.Arc2(k\=.1, arrow\='<-').at(c.SSE).to(d.NNE).label('10/0', fontsize\=10)
+
+#### Logical Flow Diagram
+
+with schemdraw.Drawing(unit\=1) as dwg:
+    dwg += (a := flow.Circle(r\=.5).label('a'))
+    dwg += (x := flow.Decision(w\=1.5, h\=1.5).label('$X$').at(a.S).anchor('N'))
+    dwg += elm.RightLines(arrow\='->').at(x.E).label('$\\overline{X}$')
+    dwg += (y1 := flow.Decision(w\=1.5, h\=1.5).label('$Y$'))
+    dwg.move\_from(y1.N, dx\=-5)
+    dwg += (y2 := flow.Decision(w\=1.5, h\=1.5).label('$Y$'))
+    dwg += elm.RightLines(arrow\='->').at(x.W).to(y2.N).label('$X$')
+    dwg += elm.Arrow().at(y2.S).label('$Y$')
+    dwg += (b := flow.Circle(r\=.5).label('b'))
+    dwg.move\_from(b.N, dx\=2)
+    dwg += (c := flow.Circle(r\=.5).label('c'))
+    dwg += elm.RightLines(arrow\='->').at(y2.E).to(c.N).label('$\\overline{Y}$')
+    dwg += elm.Arrow().at(y1.S).label('$Y$')
+    dwg += (d := flow.Circle(r\=.5).label('d'))
+    dwg.move\_from(d.N, dx\=2)
+    dwg += (e := flow.Circle(r\=.5).label('e'))
+    dwg += elm.RightLines(arrow\='->').at(y1.E).to(e.N).label('$\\overline{Y}$')
+
+### Styles
+
+Circuit elements can be styled using Matplotlib colors, line-styles, and line widths.
+
+#### Resistor circle
+
+Uses named colors in a loop.
+
+with schemdraw.Drawing() as d:
+    for i, color in enumerate(\['red', 'orange', 'yellow', 'yellowgreen', 'green', 'blue', 'indigo', 'violet'\]):
+        d += elm.Resistor().theta(45\*i+20).color(color).label('R{}'.format(i))
+
+#### Hand-drawn
+
+And for a change of pace, activate Matplotlib’s XKCD mode for “hand-drawn” look!
+
+import matplotlib.pyplot as plt
+plt.xkcd()
+
+with schemdraw.Drawing() as d:
+    d += (op := elm.Opamp(leads\=True))
+    d += elm.Line().down().at(op.in2).length(d.unit/4)
+    d += elm.Ground(lead\=False)
+    d += (Rin := elm.Resistor().at(op.in1).left().idot().label('$R\_{in}$', loc\='bot').label('$v\_{in}$', loc\='left'))
+    d += elm.Line().up().at(op.in1).length(d.unit/2)
+    d += elm.Resistor().tox(op.out).label('$R\_f$')
+    d += elm.Line().toy(op.out).dot()
+    d += elm.Line().right().at(op.out).length(d.unit/4).label('$v\_{o}$', loc\='right')
+
+* * *
+
+Need more circuit examples? Check out the Schemdraw Examples Pack on buymeacoffee.com:
+
+[
+
+Customizing Elements
+---------------------------------------------------------------------
+
+### Grouping Elements
+
+If a set of circuit elements are to be reused multiple times, they can be grouped into a single element. Create and populate a drawing, but set show=False. Instead, use the Drawing to create a new [`schemdraw.elements.ElementDrawing`](#schemdraw.elements.ElementDrawing "schemdraw.elements.ElementDrawing"), which converts the drawing into an element instance to add to other drawings.
+
+with schemdraw.Drawing(show\=False) as d1:
+    d1 += elm.Resistor()
+    d1.push()
+    d1 += elm.Capacitor().down()
+    d1 += elm.Line().left()
+    d1.pop()
+
+with schemdraw.Drawing() as d2:  \# Add a second drawing
+    for i in range(3):        d2 += elm.ElementDrawing(d1)   \# Add the first drawing to it 3 times
+
+### Defining custom elements
+
+All elements are subclasses of [`schemdraw.elements.Element`](#schemdraw.elements.Element "schemdraw.elements.Element") or [`schemdraw.elements.Element2Term`](#schemdraw.elements.Element2Term "schemdraw.elements.Element2Term"). For elements consisting of several other already-defined elements (like a relay), [`schemdraw.elements.compound.ElementCompound`](#schemdraw.elements.compound.ElementCompound "schemdraw.elements.compound.ElementCompound") can be used for easy combining of multiple elements. Subclasses only need to define the \_\_init\_\_ method in order to add lines, shapes, and text to the new element, all of which are defined using [`schemdraw.segments.Segment`](#schemdraw.segments.Segment "schemdraw.segments.Segment") classes. New Segments should be appended to the Element.segments attribute list.
+
+Coordinates are all defined in element cooridnates, where the element begins at (0, 0) and is drawn from left to right. The drawing engine will rotate and translate the element to its final position, and for two-terminal elements deriving from Element2Term, will add lead extensions to the correct length depending on the element’s placement parameters. Therefore elements deriving from Element2Term should not define the lead extensions (e.g. a Resistor only defines the zig-zag portion). A standard resistor is 1 drawing unit long, and with default lead extension will become 3 units long.
+
+Segments include [`schemdraw.segments.Segment`](#schemdraw.segments.Segment "schemdraw.segments.Segment"), [`schemdraw.segments.SegmentPoly`](#schemdraw.segments.SegmentPoly "schemdraw.segments.SegmentPoly"), [`schemdraw.segments.SegmentCircle`](#schemdraw.segments.SegmentCircle "schemdraw.segments.SegmentCircle"), [`schemdraw.segments.SegmentArc`](#schemdraw.segments.SegmentArc "schemdraw.segments.SegmentArc"), [`schemdraw.segments.SegmentText`](#schemdraw.segments.SegmentText "schemdraw.segments.SegmentText"), and [`schemdraw.segments.SegmentBezier`](#schemdraw.segments.SegmentBezier "schemdraw.segments.SegmentBezier").
+
+The subclassed Element.\_\_init\_\_ method can be defined with extra parameters to help define the element options.
+
+In addition to the list of Segments, any named anchors and other parameters should be specified. Anchors should be added to the Element.anchors dictionary as {name: (x, y)} key/value pairs.
+
+The Element instance maintains its own parameters dictionary in Element.params that override the default drawing parameters. Parameters are resolved by a ChainMap of user arguments to the Element instance, the Element.params attribute, then the schemdraw.Drawing parameters, in that order. A common use of setting Element.params in the setup function is to change the default position of text labels, for example Transistor elements apply labels on the right side of the element by default, so they add to the setup:
+
+self.params\['lblloc'\] \= 'rgt'
+
+The user can still override this label position by creating, for example, Transistor().label(‘Q1’, loc=’top’).
+
+As an example, here’s the definition of our favorite element, the resistor:
+
+class Resistor(Element2Term):
+    def \_\_init\_\_(self, \*d, \*\*kwargs):
+        super().\_\_init\_\_(\*d, \*\*kwargs)
+        self.segments.append(Segment(\[(0, 0),
+                                      (0.5\*reswidth, resheight),
+                                      (1.5\*reswidth, \-resheight),
+                                      (2.5\*reswidth, resheight),
+                                      (3.5\*reswidth, \-resheight),
+                                      (4.5\*reswidth, resheight),
+                                      (5.5\*reswidth, \-resheight),
+                                      (6\*reswidth, 0)\]))
+
+The resistor is made of one path. reswidth and resheight are constants that define the height and width of the resistor zigzag (and are referenced by several other elements too). Browse the source code in the Schemdraw.elements submodule to see the definitions of the other built-in elements.
+
+#### Flux Capacitor Example
+
+For an example, let’s make a flux capacitor circuit element.
+
+Since everyone knows a flux-capacitor has three branches, we should subclass the standard [`schemdraw.elements.Element`](#schemdraw.elements.Element "schemdraw.elements.Element") class instead of [`schemdraw.elements.Element2Term`](#schemdraw.elements.Element2Term "schemdraw.elements.Element2Term"). Start by importing the Segments and define the class name and \_\_init\_\_ function:
+
+from schemdraw.segments import \*
+
+class FluxCapacitor(Element):
+    def \_\_init\_\_(self, \*d, \*\*kwargs):
+        super().\_\_init\_\_(\*d, \*\*kwargs)
+
+The d and kwargs are passed to super to initialize the Element.
+
+We want a dot in the center of our flux capacitor, so start by adding a SegmentCircle. The fclen and radius variables could be set as arguments to the \_\_init\_\_ for the user to adjust, if desired, but here they are defined as constants in the \_\_init\_\_.
+
+fclen \= 0.5
+radius \= 0.075
+self.segments.append(SegmentCircle((0, 0), radius))
+
+Next, add the paths as Segment instances, which are drawn as lines. The flux capacitor will have three paths, all extending from the center dot:
+
+self.segments.append(Segment(\[(0, 0), (0, \-fclen\*1.41)\]))
+self.segments.append(Segment(\[(0, 0), (fclen, fclen)\]))
+self.segments.append(Segment(\[(0, 0), (\-fclen, fclen)\]))
+
+And at the end of each path is an open circle. Append three more SegmentCircle instances. By specifying fill=None the SegmentCircle will always remain unfilled regardless of any fill arguments provided to Drawing or FluxCapacitor.
+
+self.segments.append(SegmentCircle((0, \-fclen\*1.41), 0.2, fill\=None))
+self.segments.append(SegmentCircle((fclen, fclen), 0.2, fill\=None))
+self.segments.append(SegmentCircle((\-fclen, fclen), 0.2, fill\=None))
+
+Finally, we need to define anchor points so that other elements can be connected to the right places. Here, they’re called p1, p2, and p3 for lack of better names (what do you call the inputs to a flux capacitor?) Add these to the self.anchors dictionary.
+
+self.anchors\['p1'\] \= (\-fclen, fclen)
+self.anchors\['p2'\] \= (fclen, fclen)
+self.anchors\['p3'\] \= (0, \-fclen\*1.41)
+
+Here’s the Flux Capacitor class all in one:
+
+class FluxCapacitor(elm.Element):
+    def \_\_init\_\_(self, \*d, \*\*kwargs):
+        super().\_\_init\_\_(\*d, \*\*kwargs)
+        radius \= 0.075
+        fclen \= 0.5
+        self.segments.append(SegmentCircle((0, 0), radius))
+        self.segments.append(Segment(\[(0, 0), (0, \-fclen\*1.41)\]))
+        self.segments.append(Segment(\[(0, 0), (fclen, fclen)\]))
+        self.segments.append(Segment(\[(0, 0), (\-fclen, fclen)\]))
+        self.segments.append(SegmentCircle((0, \-fclen\*1.41), 0.2, fill\=None))
+        self.segments.append(SegmentCircle((fclen, fclen), 0.2, fill\=None))
+        self.segments.append(SegmentCircle((\-fclen, fclen), 0.2, fill\=None))
+        self.anchors\['p1'\] \= (\-fclen, fclen)
+        self.anchors\['p2'\] \= (fclen, fclen)
+        self.anchors\['p3'\] \= (0, \-fclen\*1.41)
+
+Try it out:
+
+FluxCapacitor()
+
+### Segment objects
+
+After an element is added to a drawing, the [`schemdraw.segments.Segment`](#schemdraw.segments.Segment "schemdraw.segments.Segment") objects defining it are accessible in the segments attribute list of the Element. For even more control over customizing individual pieces of an element, the parameters of a Segment can be changed.
+
+d += (n := logic.Nand())
+n.segments\[1\].color \= 'red'
+n.segments\[1\].zorder \= 5  \# Put the bubble on top
+
+### Matplotlib axis
+
+When using the Matplotlib backend (the default), a final customization option is to use the Matplotlib figure and add to it. A `schemdraw.Figure` is returned from the draw method, which contains fig and ax attributes holding the Matplotlib figure.
+
+schemdraw.use('matplotlib')
+d \= schemdraw.Drawing()
+d.add(elm.Resistor())
+schemfig \= d.draw()
+schemfig.ax.axvline(.5, color\='purple', ls\='--')
+schemfig.ax.axvline(2.5, color\='orange', ls\='-', lw\=3);
+display(schemfig)
